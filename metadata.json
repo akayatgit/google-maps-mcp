@@ -1,0 +1,6 @@
+{
+  "name": "GroundingLite Agent",
+  "description": "A conversational AI assistant, powered by Gemini, that uses the Google Places API as a tool to help users discover and learn about places. Chat with GroundingLite Agent to find restaurants, attractions, and more.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

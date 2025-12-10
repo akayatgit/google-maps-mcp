@@ -1,0 +1,223 @@
+/**
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@import "tailwindcss";
+
+/* Ensure chat-app custom element takes full viewport space */
+chat-app {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+  /* Material Design 3 Light Theme Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #F0F2F5; /* Light grey, similar to Surface Container */
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #B8BEC4; /* Medium grey, like Outline */
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #283B3D; /* Slightly darker grey */
+  }
+
+  /* Styles for clickable place indices in chat */
+  .place-index-link {
+    background-color: transparent;
+    border: none;
+    color: #006780; /* Primary color */
+    font-weight: 600; /* semibold */
+    padding: 0 1px;
+    margin: 0;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline;
+    vertical-align: baseline;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .place-index-link:hover, .place-index-link:focus {
+    text-decoration: underline;
+  }
+  .place-index-link:focus {
+    outline: 2px solid #006780;
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
+
+  /* Material Design 3 Light Theme styles for marked output */
+  .chat-message-content ul, .chat-message-content ol {
+    list-style-position: inside;
+    padding-left: 1.25rem; /* pl-5 */
+    margin-top: 0.5rem; /* my-2 */
+    margin-bottom: 0.5rem;
+  }
+  .chat-message-content ul {
+    list-style-type: disc;
+  }
+  .chat-message-content ol {
+    list-style-type: decimal;
+  }
+  .chat-message-content li {
+    margin-bottom: 0.25rem; /* mb-1 */
+  }
+  .chat-message-content a {
+    color: #006780; /* Primary color */
+    text-decoration: none;
+  }
+  .chat-message-content a:hover {
+    color: #004F63; /* Darker Primary */
+    text-decoration: underline;
+  }
+  .chat-message-content pre {
+    background-color: #F0F2F5; /* Surface Container Low/Medium */
+    color: #1A1C1E; /* On Surface */
+    border: 1px solid #DFE3E8; /* Surface Variant */
+    padding: 0.75rem; /* p-3 */
+    border-radius: 0.375rem; /* rounded-md */
+    overflow-x: auto;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.875rem; /* text-sm */
+  }
+  .chat-message-content code:not(pre > code) {
+    background-color: #E0E2E6; /* Surface Container */
+    color: #1A1C1E; /* On Surface */
+    padding: 0.125rem 0.25rem; /* px-1 py-0.5 */
+    border-radius: 0.25rem; /* rounded-sm */
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.875em; /* slightly smaller than surrounding text */
+  }
+  .chat-message-content blockquote {
+    border-left: 4px solid #B8BEC4; /* Outline */
+    padding-left: 1rem; /* pl-4 */
+    margin-left: 0;
+    margin-right: 0;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-style: italic;
+    color: #42474E; /* On Surface Variant */
+    background-color: #F0F2F5; /* Surface Container Low */
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    padding-right: 1rem;
+  }
+  .chat-message-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid #CFD2D6; /* Light border for table */
+  }
+  .chat-message-content th, .chat-message-content td {
+    border: 1px solid #CFD2D6; /* Lighter border */
+    padding: 0.5rem; /* p-2 */
+    text-align: left;
+    color: #1A1C1E; /* On Surface */
+  }
+  .chat-message-content th {
+    background-color: #E0E2E6; /* Surface Container */
+  }
+  .chat-message-content hr {
+    border-top: 1px solid #CFD2D6; /* Lighter border */
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Custom styles for quick answer buttons to restore hover expansion */
+  .quick-answer-button {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 100%; /* Ensure it respects container width when not expanded */
+    user-select: none;
+      -webkit-user-select: none;
+  }
+
+  .quick-answer-button.expanded {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    max-width: none;
+    z-index: 10; /* Ensure it floats above nearby buttons */
+    position: relative; /* Needed for z-index to work */
+  }
+
+  gmp-internal-use-place-details-compact{
+    border-radius:10px !important;
+    padding:10px !important
+  }
+
+  /* --- Quick Answers Mobile Styling Fixes --- */
+
+  /* Ensure horizontal scrolling is retained but scrollbar is hidden */
+  .quick-answers-mobile-layout {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+
+  .quick-answers-mobile-layout::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  /* Fix for fixed width and truncation on small screens (less than sm breakpoint) */
+  /* This ensures the items are wide enough to push content past the overflow point and truncate at 16 characters */
+  @media (max-width: 767px) {
+    .quick-answers-mobile-layout button.quick-answer-button {
+      max-width: 16ch !important;
+      min-width: 16ch !important;
+      white-space: nowrap !important;
+      }
+      
+      .quick-answers-mobile-layout button.quick-answer-button.expanded {
+        max-width: none !important;
+        width: auto !important;
+        min-width: auto !important;
+        white-space: normal !important;
+        z-index: 100 !important;
+        position: relative;
+    }
+  }
+/* --- Chat Overlay & Toggle Button Styles --- */
+
+/*
+  Defines the default (collapsed) and expanded states for the chat overlay.
+  A transition is added for a smooth animation between states.
+*/
+.chat-overlay-height {
+  max-height: 50vh; /* Default collapsed height for mobile */
+  transition: max-height 0.3s ease-in-out;
+}
+
+.chat-overlay-expanded {
+  max-height: 100vh; /* Full screen height for mobile */
+}
+
+@media (min-width: 768px) {
+  .chat-overlay-height {
+    max-height: 400px; /* Collapsed height for desktop */
+  }
+
+  .chat-overlay-expanded {
+    max-height: 100%; /* Expanded height for desktop */
+  }
+}

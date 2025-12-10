@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Grounding Lite - Sample App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "lit": "https://esm.sh/lit@^3.1.4",
+    "@google/genai": "https://esm.sh/@google/genai@1.29.0",
+    "@modelcontextprotocol/sdk/": "https://esm.sh/@modelcontextprotocol/sdk@1.21.1/",
+    "zod": "https://esm.sh/zod@^3.25.7",
+    "marked": "https://esm.sh/marked@^13.0.2"
+  }
+}
+</script>
+</head>
+<body class="bg-[#FCFCFF] text-[#1A1C1E] overflow-hidden" style="height: 100dvh; height: 100vh;">
+  <chat-app></chat-app>
+  <script type="module" src="/index.ts"></script>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-M9JNYFWNDT"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-M9JNYFWNDT');
+  </script>
+</body>
+</html>

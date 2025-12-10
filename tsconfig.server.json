@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "outDir": "dist",
+    "rootDir": ".",
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["start.ts", "mcpPlacesServer.ts", "services/**/*.ts", "types.ts", "api/**/*.ts"],
+  "exclude": ["node_modules", "index.ts", "chat-app.ts", "vite.config.ts", "components/**/*.ts"]
+}
