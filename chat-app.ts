@@ -215,12 +215,12 @@ export class ChatApp extends LitElement {
   @state()
   private mapHeading: number = 0;
 
+  @state()
+  private isMapBlurred: boolean = false;
+
   private quickAnswers: string[] = [
     "What are the best beaches near Santa Monica?",
     "What is the driving route from Los Angeles to San Diego?",
-    "What is the weather like in San Francisco today?",
-    "Find me a highly-rated coffee shop in Palo Alto, CA.",
-    "I want to go from San Jose to Yosemite National Park tomorrow. How to sleep there? what is the best route and what is the weather forecast?",
   ];
 
   private getDynamicQuickAnswers(): string[] {
@@ -514,24 +514,18 @@ export class ChatApp extends LitElement {
         .then(({ success, modelName }) => {
           this.modelName = modelName;
           if (success) {
-            const modelDisplay = modelName ? `<div class="text-xs text-gray-400 mt-2 text-right">Powered by ${modelName}</div>` : '';
+            const modelDisplay = '';
             const githubButton = `
               <a href="https://github.com/googlemaps-samples/grounding-lite-mcp-sample-app" target="_blank" style="display: inline-flex; align-items: center; vertical-align: middle;">
                 <img src="/images/github-icon.svg" alt="GitHub Icon" style="height: 1.2em;margin-right: 0.3em"> GitHub Code ${this.githubStarCount !== null ? ` - Star&nbsp;<span style="display: inline-flex; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; background-color: #eeeeee; border-radius: 50%; color: darkgrey;">${this.githubStarCount}</span>` : ''}
               </a>`; //  ${githubButton ? ` | ${githubButton}` : ''}
-            const buttonContainer = `
-              <div style="text-align: right; margin-top: 1em; font-size: 0.8em;">
-                <a href="https://console.cloud.google.com/marketplace/product/google/mapstools.googleapis.com" target="_blank">Grounding Lite activate</a> |
-                <a href="https://developers.google.com/maps/ai/grounding-lite" target="_blank">documentation</a>
-
-              </div>
-            `;
+            const buttonContainer = ``;
             this.chatHistory = [
               {
                 id: generateId(),
                 role: 'model',
                 parts: [{
-                  text: `Hello! This is a demo travel planning app powered by Gemini and <span style="white-space: nowrap;font-weight:700"><img src="/images/Maps_Grounding_Lite.png" alt="Grounding Lite Icon" style="height: 2em; vertical-align: middle; display: inline-block;">Grounding Lite</span> MCP Service. Here we demonstrate how we can serve Google Maps Platform data as an embedding to any LLM powered application. This functionality enables the creation of diverse applications, such as a Travel Planner, Real Estate Explorer, or City Tour Guide. Try one of the sample prompts to explore!
+                  text: `Hello, how can I assist you on the road today?
 ${modelDisplay}
 ${buttonContainer}`
                 }],
@@ -627,13 +621,24 @@ ${buttonContainer}`
       // Determine minimum range based on content type
       let minRange = 2000; // Default minimum for multiple points or routes/weather
 
-      // If only one place is found and no route/weather data, use a wider view (100km)
+      // If only one place is found and no route/weather data, keep a closer view
       if (validGeometriesCount === 1 && !this.mapDisplayData.route && !this.mapDisplayData.weather) {
         minRange = 1000; // 1km range for close-up view
       }
 
+      // For multiple places or active routes, zoom out further so all geometry is comfortably in frame
+      // with generous padding around the outermost points.
+      let paddingFactor = 1.2;
+      if (validGeometriesCount > 1 && !this.mapDisplayData.route) {
+        // Zoom out aggressively so all pins are clearly visible even with the chat overlay.
+        paddingFactor = 3.5;
+      } else if (this.mapDisplayData.route) {
+        // For routes, also zoom out more than default so both origin and destination plus path are well framed.
+        paddingFactor = 3.0;
+      }
+
       // Set range to be slightly larger than the diagonal distance, minimum determined above
-      let calculatedRange = Math.max(minRange, distance * 1.2);
+      let calculatedRange = Math.max(minRange, distance * paddingFactor);
 
       // Apply forced range if set (e.g., when clicking a single place link)
       if (forceRange !== null) {
@@ -683,14 +688,26 @@ ${buttonContainer}`
       const latOffset = calculateTiltOffsetLat(this.mapTilt, cameraAltitude);
 
       // Determine the final center point for the camera
-      const finalCenterLatLng = center ? new window.google.maps.LatLng(center.latitude, center.longitude) : centerLatLng;
+      let finalCenterLatLng = center ? new window.google.maps.LatLng(center.latitude, center.longitude) : centerLatLng;
+
+      // When there are multiple places OR an active route, shift the center to the right (east)
+      // so that pins/route appear further left in the viewport (chat is on the right).
+      if ((validGeometriesCount > 1 || this.mapDisplayData.route) && window.google?.maps?.geometry?.spherical?.computeOffset) {
+        try {
+          // Shift ~80% of the diagonal distance to the EAST (bearing 90°) so geometry appears further LEFT in the viewport.
+          const lateralShift = distance * 0.8;
+          finalCenterLatLng = window.google.maps.geometry.spherical.computeOffset(finalCenterLatLng, lateralShift, 90);
+        } catch (e) {
+          console.warn('[Map Camera] Failed to compute lateral center shift:', e);
+        }
+      }
 
       trace("cameraAltitude : " + cameraAltitude)
       // Prepare camera options
       const cameraOptions = {
         center: {
           lat: finalCenterLatLng.lat() - (latOffset * 0.9), // Apply latitude offset to compensate for camera tilt (shifts center south)
-          lng: finalCenterLatLng.lng(), //+ 0.05, // Shift west to compensate for chat overlay on the right
+          lng: finalCenterLatLng.lng(),
           altitude: cameraAltitude,
         },
         heading: this.mapHeading,
@@ -1867,7 +1884,7 @@ ${buttonContainer}`
         }
       </style>
 
-      <div class="w-full h-full bg-[#FCFCFF] text-[#1A1C1E] selection:bg-[#0095ffff] selection:text-[#001F2A]">
+      <div class="w-full h-full" style="background: radial-gradient(circle at top, #1f2937 0, #020617 45%, #000000 100%); color: #e5e7eb;" class="selection:bg-[#38bdf8] selection:text-[#0b1120]">
         <div id="places-service-dummy" style="display: none;"></div>
         <div class="w-full h-full relative overflow-hidden">
 
@@ -1893,6 +1910,12 @@ ${buttonContainer}`
             </gmp-map-3d>
           </div>
 
+          <!-- Blur overlay above the map (toggled by chat hover/focus) -->
+          <div
+            class="absolute inset-0 pointer-events-none transition-opacity duration-200"
+            style="${this.isMapBlurred ? 'opacity:1;' : 'opacity:0;'} background: radial-gradient(circle at top, rgba(15,23,42,0.7) 0, rgba(15,23,42,0.8) 50%, rgba(15,23,42,0.9) 100%); backdrop-filter: blur(10px);"
+          ></div>
+
           <!-- Chat Overlay (fixed width, positioned right) -->
           <div id="chat-overlay" class="absolute bottom-0 right-0 w-full sm:w-1/2 xl:w-2/5 flex flex-col z-20 pointer-events-none chat-overlay-height ${this.isChatExpanded ? 'chat-overlay-expanded' : ''}">
 
@@ -1900,7 +1923,7 @@ ${buttonContainer}`
             ${this.isToggleVisible ? html`
             <button
               @click=${this.toggleChatExpansion}
-              class="absolute top-0 right-0 p-1 z-30 pointer-events-auto text-[#1A1C1E] bg-[#FCFCFF] rounded-tl-lg rounded-bl-lg shadow-md"
+              class="absolute top-0 right-0 p-1 z-30 pointer-events-auto text-[#e5e7eb] bg-[#020617cc] rounded-tl-lg rounded-bl-lg shadow-md border border-[#1f2937]"
               aria-label=${this.isChatExpanded ? 'Minimize chat' : 'Expand chat'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transition-transform duration-300 ${this.isChatExpanded ? 'rotate-180' : 'rotate-0'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1917,19 +1940,25 @@ ${buttonContainer}`
             </header> -->
 
             ${this.apiKeysState.errorMessage ? html`
-              <div class="p-3 bg-[#F9DEDC] text-[#410E0B] text-sm text-center flex-shrink-0">
+              <div class="p-3 bg-[#1f2937] text-[#f97373] text-sm text-center flex-shrink-0 border-b border-[#374151]">
                 <p class="font-semibold">Configuration Error:</p>
                 <p>${this.apiKeysState.errorMessage}</p>
               </div>
             ` : ''}
 
             <!-- Removed background from chat-container -->
-            <div id="chat-container" @click=${this.handleChatContainerClick} class="flex-grow mx-4 pt-4 pb-1 sm:mx-6 sm:pt-6 sm:pb-1 space-y-4 overflow-y-auto scroll-smooth flex flex-col pointer-events-auto rounded-t-2xl">
+            <div
+              id="chat-container"
+              @click=${this.handleChatContainerClick}
+              @mouseenter=${() => this.isMapBlurred = true}
+              @mouseleave=${() => this.isMapBlurred = false}
+              class="flex-grow mx-4 pt-4 pb-1 sm:mx-6 sm:pt-6 sm:pb-1 space-y-4 overflow-y-auto scroll-smooth flex flex-col pointer-events-auto rounded-t-2xl"
+            >
               <div class="flex-grow"></div>
               ${repeat(this.chatHistory, (msg: ChatMessage) => msg.id, (msg: ChatMessage) => html`
                 <div class="flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} pointer-events-auto">
-                  <div class="max-w-full sm:max-w-[90%] p-3 shadow ${msg.role === 'user' ? 'bg-[#0095ffff] text-white rounded-t-2xl rounded-l-2xl rounded-br-lg' :
-                  'bg-[#FFFFFF] text-[#1A1C1E] rounded-t-2xl rounded-r-2xl rounded-bl-lg'
+                  <div class="max-w-full sm:max-w-[90%] p-3 shadow ${msg.role === 'user' ? 'bg-[#38bdf8] text-[#020617] rounded-t-2xl rounded-l-2xl rounded-br-lg' :
+                  'bg-[#0f172a] text-[#e5e7eb] rounded-t-2xl rounded-r-2xl rounded-bl-lg border border-[#1f2937]'
       }">
                     ${msg.weatherData ? html`<weather-display .weather=${msg.weatherData}></weather-display>` : ''}
                     <!-- TODO: Add a placeholder at the end of the response -->
@@ -1953,20 +1982,20 @@ ${buttonContainer}`
                             ${msg.role === 'model' && msg.toolExchanges && msg.toolExchanges.length > 0 ? html`
                                 <button
                                     @click=${() => this.handleShowRawResponse(msg.toolExchanges!)}
-                                    class="text-xs px-2 py-0.5 rounded border border-[#74777F] text-[#44474E] bg-[#FFFFFF] hover:bg-[#F3F4F6] transition-colors shadow-sm"
+                                    class="text-xs px-2 py-0.5 rounded border border-[#1f2937] text-[#e5e7eb] bg-[#020617] hover:bg-[#111827] transition-colors shadow-sm"
                                 >
                                     MCP response
                                 </button>
                             ` : ''}
 
                             ${this.shouldShowMapsAttribution(msg) ? html`
-                                <span class="GMP-attribution text-s text-[#42474E] opacity-70">Google Maps</span>
+                                <span class="GMP-attribution text-s text-[#9ca3af] opacity-80">Google Maps</span>
                             ` : ''}
 
                             ${msg.role === 'model' && msg.error && this.lastUserMessageContent ? html`
                                 <button
                                     @click=${this.handleRetry}
-                                    class="text-xs px-2 py-0.5 rounded bg-[#B3261E] text-white hover:bg-[#8C1C16] transition-colors shadow-sm"
+                                    class="text-xs px-2 py-0.5 rounded bg-[#b91c1c] text-white hover:bg-[#991b1b] transition-colors shadow-sm"
                                 >
                                     Retry
                                 </button>
@@ -2003,7 +2032,7 @@ ${buttonContainer}`
                     @touchend=${this.handleQuickAnswerMouseOut}
                     @touchcancel=${this.handleQuickAnswerMouseOut}
                     @contextmenu=${(e: Event) => e.preventDefault()}
-                    class="quick-answer-button text-xs px-3 py-1.5 rounded-full text-white bg-[rgb(200,87,249)] hover:bg-[rgb(180,70,230)] active:bg-[rgb(180,70,230)] transition-colors duration-150 shadow max-w-full flex-shrink-0 whitespace-nowrap sm:self-start sm:truncate sm:mb-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="quick-answer-button text-xs px-3 py-1.5 rounded-full text-[#e5e7eb] bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/15 backdrop-blur-md transition-colors duration-150 shadow-lg max-w-full flex-shrink-0 whitespace-nowrap sm:self-start sm:truncate sm:mb-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     ?disabled=${this.isLoading}
                   >
                     ${answer}
@@ -2017,15 +2046,15 @@ ${buttonContainer}`
                     type="text"
                     .value=${this.userInput}
                     @input=${(e: Event) => this.userInput = (e.target as HTMLInputElement).value}
-                    placeholder=${this.isAwaitingRouteOrigin ? "Enter your starting point (origin)" : (areAllKeysConfigured ? "Enter a location search" : "API keys must be configured.")}
-                    class="flex-grow p-3 text-sm text-[#1A1C1E] bg-[#F0F2F5] rounded-l-full focus:outline-none disabled:opacity-50 shadow"
+                    placeholder=${this.isAwaitingRouteOrigin ? "Enter your starting point (origin)" : (areAllKeysConfigured ? "Chat with your map" : "API keys must be configured.")}
+                    class="flex-grow p-3 text-sm text-[#e5e7eb] bg-[#020617] rounded-l-full focus:outline-none disabled:opacity-50 shadow border border-[#1f2937]"
                     ?disabled=${this.isLoading || !areAllKeysConfigured}
                     aria-label="User input"
                   />
 
                   <button
                     type="submit"
-                    class="bg-[#006780] text-white p-[10px] rounded-r-full hover:bg-[#004F63] active:bg-[#42474E] focus:outline-none focus:ring-2 focus:ring-[#006780] disabled:bg-[#A0A5AA] disabled:cursor-not-allowed shadow"
+                    class="bg-[#38bdf8] text-[#020617] p-[10px] rounded-r-full hover:bg-[#0ea5e9] active:bg-[#0ea5e9] focus:outline-none focus:ring-2 focus:ring-[#38bdf8] disabled:bg-[#1f2937] disabled:text-[#4b5563] disabled:cursor-not-allowed shadow"
                     ?disabled=${this.isLoading || !this.userInput.trim() || !areAllKeysConfigured}
                     aria-label="Send message"
                   >
@@ -2045,11 +2074,11 @@ ${buttonContainer}`
 
       <!-- Raw Response Modal Overlay -->
       ${this.isRawResponseModalOpen ? html`
-        <div class="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-auto bg-white bg-opacity-80 backdrop-blur-sm" @click=${this.handleCloseRawResponseModal}>
-          <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="p-4 border-b flex justify-between items-center bg-[#F0F2F5]">
-              <h2 class="text-lg font-semibold text-[#1A1C1E]">Grounding Lite Request - Response</h2>
-              <button @click=${this.handleCloseRawResponseModal} class="text-gray-500 hover:text-gray-700" aria-label="Close modal">
+        <div class="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-auto bg-black bg-opacity-70 backdrop-blur-sm" @click=${this.handleCloseRawResponseModal}>
+          <div class="bg-[#020617] rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-[#1f2937]" @click=${(e: Event) => e.stopPropagation()}>
+            <div class="p-4 border-b flex justify-between items-center bg-[#0f172a]">
+              <h2 class="text-lg font-semibold text-[#e5e7eb]">Grounding Lite Request - Response</h2>
+              <button @click=${this.handleCloseRawResponseModal} class="text-[#9ca3af] hover:text-[#e5e7eb]" aria-label="Close modal">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -2057,8 +2086,8 @@ ${buttonContainer}`
             </div>
             <div class="flex-grow overflow-y-auto p-4 space-y-6">
               ${repeat(this.rawResponseModalContent, (exchange: ToolExchange, index: number) => html`
-                <div class="border border-gray-300 rounded-lg p-4 bg-white shadow-sm">
-                  <h3 class="text-md font-bold text-[#006780] mb-3">Tool Call ${index + 1}: ${exchange.toolName}</h3>
+                <div class="border border-[#1f2937] rounded-lg p-4 bg-[#020617] shadow-sm">
+                  <h3 class="text-md font-bold text-[#38bdf8] mb-3">Tool Call ${index + 1}: ${exchange.toolName}</h3>
 
                   <!-- Request -->
                   <div class="mb-4">
