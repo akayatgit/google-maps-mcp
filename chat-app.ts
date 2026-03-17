@@ -1499,6 +1499,40 @@ ${buttonContainer}`
     const iconSvg = getWeatherMarkerIcon(data.weatherCondition?.type);
     const title = `Weather: ${data.weatherCondition?.description?.text || 'Click for details'}`;
 
+    // Build a circular marker shell to wrap the SVG icon with colored ring and soft shadows
+    const weatherMarkerHtml = `
+      <div
+        style="
+          width: 56px;
+          height: 56px;
+          border-radius: 9999px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: radial-gradient(circle at 30% 20%, #f9fafb 0, #e5e7eb 35%, #d1d5db 100%);
+          border: 4px solid #8E3AF0;
+          box-shadow:
+            0 4px 10px rgba(15, 23, 42, 0.6),
+            0 0 12px rgba(139, 92, 246, 0.75);
+        "
+      >
+        <div
+          style="
+            width: 40px;
+            height: 40px;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111827;
+            color: #ffffff;
+          "
+        >
+          ${iconSvg}
+        </div>
+      </div>
+    `;
+
     // Use marker3d-interactive-element for weather markers
     return html`
       <gmp-marker-3d
@@ -1512,7 +1546,7 @@ ${buttonContainer}`
         draws-when-occluded="true"
         z-index="1000"
         @click=${(e: Event) => this.handleWeatherMarkerClick(e, data)}
-        ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, '', false, '#8E3AF0', '#FFFFFF', 'darkgrey', iconSvg))}
+        ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, '', false, '#8E3AF0', '#FFFFFF', 'darkgrey', weatherMarkerHtml))}
       >
       </gmp-marker-3d>
     `;
@@ -1522,17 +1556,89 @@ ${buttonContainer}`
     const markers = [];
 
     if (routeData.origin?.lat_lng) {
+      // Avoid generic placeholder names when a better address is available
+      const rawOriginName = routeData.origin.name;
+      const nonGenericOriginName =
+        rawOriginName && rawOriginName.toLowerCase() !== 'origin'
+          ? rawOriginName
+          : undefined;
+
+      const originLabel = truncateLabel(
+        routeData.origin.address ??
+        (routeData.origin.place_id ? this.placeNamesCache.get(routeData.origin.place_id) : undefined) ??
+        nonGenericOriginName ??
+        'Origin',
+      );
+      const originMarkerHtml = `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+          <div
+            style="
+              max-width: 160px;
+              padding: 2px 6px;
+              border-radius: 9999px;
+              background: rgba(6, 78, 59, 0.92);
+              color: #bbf7d0;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+              font-size: 10px;
+              font-weight: 500;
+              line-height: 1.1;
+              text-align: center;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              box-shadow:
+                0 2px 4px rgba(15, 23, 42, 0.7),
+                0 0 6px rgba(16, 185, 129, 0.6);
+            "
+          >
+            ${originLabel}
+          </div>
+          <div
+            style="
+              width: 56px;
+              height: 56px;
+              border-radius: 9999px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: radial-gradient(circle at 30% 20%, #dcfce7 0, #bbf7d0 40%, #86efac 100%);
+              border: 4px solid #16a34a;
+              box-shadow:
+                0 4px 10px rgba(15, 23, 42, 0.6),
+                0 0 12px rgba(22, 163, 74, 0.75);
+            "
+          >
+            <div
+              style="
+                width: 40px;
+                height: 40px;
+                border-radius: 9999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #022c22;
+                color: #ccffcc;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                font-weight: 700;
+                font-size: 18px;
+              "
+            >
+              A
+            </div>
+          </div>
+        </div>
+      `;
       markers.push(html`
         <gmp-marker-3d-interactive
           position=${`${routeData.origin.lat_lng.latitude}, ${routeData.origin.lat_lng.longitude}, 50`}
-          title="Route Origin"
+          title=${`Route: ${originLabel}`}
           z-index="1000"
           clickable="true"
           collision-behavior="REQUIRED_AND_HIDES_OPTIONAL"
           draws-when-occluded="true"
           .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
           extruded="true"
-          label=${truncateLabel(routeData.origin.name ?? (routeData.origin.place_id ? this.placeNamesCache.get(routeData.origin.place_id) : undefined) ?? routeData.origin.address ?? 'Origin')}
+          label=${originLabel}
           @gmp-click=${(e: any) => {
           if (e.preventDefault) e.preventDefault();
           e.stopPropagation();
@@ -1541,25 +1647,97 @@ ${buttonContainer}`
             this.handleMarkerClick(placeId);
           }
         }}
-          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'A', false, '#00b40fff', '#ccffcc', '#007300ff'))}
+          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'A', false, '#00b40fff', '#ccffcc', '#007300ff', originMarkerHtml))}
         >
         </gmp-marker-3d-interactive>
       `);
     }
 
     if (routeData.destination?.lat_lng) {
+      // Avoid generic placeholder names when a better address is available
+      const rawDestinationName = routeData.destination.name;
+      const nonGenericDestinationName =
+        rawDestinationName && rawDestinationName.toLowerCase() !== 'destination'
+          ? rawDestinationName
+          : undefined;
+
+      const destinationLabel = truncateLabel(
+        routeData.destination.address ??
+        (routeData.destination.place_id ? this.placeNamesCache.get(routeData.destination.place_id) : undefined) ??
+        nonGenericDestinationName ??
+        'Destination',
+      );
+      const destinationMarkerHtml = `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+          <div
+            style="
+              max-width: 160px;
+              padding: 2px 6px;
+              border-radius: 9999px;
+              background: rgba(127, 29, 29, 0.94);
+              color: #fee2e2;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+              font-size: 10px;
+              font-weight: 500;
+              line-height: 1.1;
+              text-align: center;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              box-shadow:
+                0 2px 4px rgba(15, 23, 42, 0.75),
+                0 0 6px rgba(248, 113, 113, 0.6);
+            "
+          >
+            ${destinationLabel}
+          </div>
+          <div
+            style="
+              width: 56px;
+              height: 56px;
+              border-radius: 9999px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: radial-gradient(circle at 30% 20%, #fee2e2 0, #fecaca 40%, #fca5a5 100%);
+              border: 4px solid #ef4444;
+              box-shadow:
+                0 4px 10px rgba(15, 23, 42, 0.6),
+                0 0 12px rgba(239, 68, 68, 0.75);
+            "
+          >
+            <div
+              style="
+                width: 40px;
+                height: 40px;
+                border-radius: 9999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #7f1d1d;
+                color: #ffffff;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                font-weight: 700;
+                font-size: 18px;
+              "
+            >
+              B
+            </div>
+          </div>
+        </div>
+      `;
       trace(`[Route Marker] Destination location found: ${routeData.destination.lat_lng.latitude}, ${routeData.destination.lat_lng.longitude}`);
       markers.push(html`
         <gmp-marker-3d-interactive
           position=${`${routeData.destination.lat_lng.latitude}, ${routeData.destination.lat_lng.longitude}, 50`}
-          title="Route Destination"
+          title=${`Route: ${destinationLabel}`}
           z-index="1000"
           clickable="true"
           collision-behavior="REQUIRED_AND_HIDES_OPTIONAL"
           draws-when-occluded="true"
           .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
           extruded="true"
-          label=${truncateLabel(routeData.destination.name ?? (routeData.destination.place_id ? this.placeNamesCache.get(routeData.destination.place_id) : undefined) ?? routeData.destination.address ?? 'Destination')}
+          label=${destinationLabel}
           @gmp-click=${(e: any) => {
           if (e.preventDefault) e.preventDefault();
           e.stopPropagation();
@@ -1568,7 +1746,7 @@ ${buttonContainer}`
             this.handleMarkerClick(placeId);
           }
         }}
-          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'B', false, '#FF0000', '#FFFFFF', 'white'))}
+          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'B', false, '#FF0000', '#FFFFFF', 'white', destinationMarkerHtml))}
         >
         </gmp-marker-3d-interactive>
       `);
@@ -1638,15 +1816,18 @@ ${buttonContainer}`
     pinElement.element.style.fontFamily = 'Roboto, sans-serif';
 
     if (customContentHtml) {
-      // If custom content (like an SVG icon) is provided, inject it directly into the pin element's DOM
-      // and adjust styling to ensure it's visible and centered.
+      // When custom content is provided, treat the PinElement as a container and
+      // inject a fully-styled circular marker that handles its own colors, borders, and shadows.
       pinElement.element.innerHTML = customContentHtml;
-      // Ensure the pin element itself is styled for the icon (e.g., size)
-      pinElement.element.style.width = '40px';
-      pinElement.element.style.height = '40px';
+      pinElement.element.style.width = '56px';
+      pinElement.element.style.height = '56px';
       pinElement.element.style.display = 'flex';
       pinElement.element.style.alignItems = 'center';
       pinElement.element.style.justifyContent = 'center';
+      pinElement.element.style.background = 'transparent';
+      pinElement.element.style.border = 'none';
+      pinElement.element.style.boxShadow = 'none';
+      pinElement.element.style.padding = '0';
       pinElement.element.style.color = glyphColor;
     }
 
@@ -1682,6 +1863,66 @@ ${buttonContainer}`
         const backgroundColor = isSelected ? '#0069a6' : '#00a2ff';
         const borderColor = isSelected ? '#004f7a' : '#0069a6';
 
+        const circularMarkerHtml = `
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            <div
+              style="
+                max-width: 180px;
+                padding: 2px 6px;
+                border-radius: 10px;
+                background: rgba(15, 23, 42, 0.9);
+                color: #e0f2fe;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                font-size: 10px;
+                font-weight: 500;
+                line-height: 1.1;
+                text-align: center;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                box-shadow:
+                  0 2px 4px rgba(15, 23, 42, 0.75),
+                  0 0 8px rgba(59, 130, 246, 0.8);
+              "
+            >
+              ${formatPlaceNameForLabel(rawPlaceName)}
+            </div>
+            <div
+              style="
+                width: 56px;
+                height: 56px;
+                border-radius: 9999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: radial-gradient(circle at 30% 20%, #e0f2fe 0, #bae6fd 40%, #7dd3fc 100%);
+                border: 4px solid ${borderColor};
+                box-shadow:
+                  0 4px 10px rgba(15, 23, 42, 0.65),
+                  0 0 14px rgba(59, 130, 246, 0.85);
+              "
+            >
+              <div
+                style="
+                  width: 40px;
+                  height: 40px;
+                  border-radius: 9999px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  background: ${backgroundColor};
+                  color: #ffffff;
+                  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                  font-weight: 700;
+                  font-size: 18px;
+                "
+              >
+                ${indexLabel}
+              </div>
+            </div>
+          </div>
+        `;
+
         return html`
           <gmp-marker-3d-interactive
             position=${`${place.location.latitude},${place.location.longitude}, 50`}
@@ -1697,7 +1938,7 @@ ${buttonContainer}`
             e.stopPropagation();
             this.handleMarkerClick(place.id);
           }}
-            ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, indexLabel, isSelected, backgroundColor, borderColor, '#FFFFFF'))}
+            ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, indexLabel, isSelected, backgroundColor, borderColor, '#FFFFFF', circularMarkerHtml))}
           >
           </gmp-marker-3d-interactive>
         `;
