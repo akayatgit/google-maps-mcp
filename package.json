@@ -8,7 +8,7 @@
     "build": "rm -rf dist && vite build && tsc -p tsconfig.server.json",
     "lint": "eslint . --ext .js,.ts",
     "dev:server": "npm run dev:server:watch",
-    "dev:server:watch": "nodemon --watch start.ts --watch mcpPlacesServer.ts --watch types.ts --watch api/ --watch services/ --exec \"node --import 'data:text/javascript,import { register } from \\\"node:module\\\"; import { pathToFileURL } from \\\"node:url\\\"; register(\\\"ts-node/esm\\\", pathToFileURL(\\\"./\\\"));' start.ts\"",
+    "dev:server:watch": "nodemon --watch start.ts --watch mcpPlacesServer.ts --watch types.ts --watch api/ --watch services/ --exec \"node --loader ts-node/esm start.ts\"",
     "preview": "vite preview",
     "start": "npm run start:prod",
     "start:prod": "node dist/start.js"
