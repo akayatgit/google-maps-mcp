@@ -95,6 +95,37 @@ async function main() {
       }
     });
 
+    /**
+     * Non-streaming conversation API.
+     *
+     * This endpoint is a parallel entrypoint to the same MCP-backed
+     * conversation pipeline used by `/api/chat`, but returns the full
+     * result as JSON instead of Server-Sent Events.
+     *
+     * Any future changes to `sendMessageToAI` (MCP wiring, tools, etc.)
+     * will automatically apply to both this endpoint and the UI path.
+     */
+    app.post('/api/conversation', async (req, res) => {
+      try {
+        const { message } = req.body;
+        if (!message || typeof message !== 'string') {
+          return res.status(400).json({ error: 'Message is required and must be a string.' });
+        }
+
+        const result = await sendMessageToAI(message);
+
+        // Mirror the shape used by `/api/chat` SSE events so callers
+        // can share parsing logic if desired.
+        res.json({ result });
+      } catch (error: any) {
+        console.error('Error in /api/conversation:', error);
+        res.status(500).json({
+          error: 'Failed to process conversation message.',
+          details: error?.message ?? String(error),
+        });
+      }
+    });
+
     // API endpoint for server-side geocoding/place search
     app.post('/api/searchPlaces', async (req, res) => {
       try {
