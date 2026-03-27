@@ -55,6 +55,18 @@ export interface Place {
   formattedAddress?: string; // Added for routing context
 }
 
+/** One tab in the left details pane; indices reference the unified 0-based place list for the turn. */
+export interface PlaceCategoryTab {
+  id: string;
+  label: string;
+  placeIndices: number[];
+}
+
+/** Parsed from model JSON (see system instruction) or built as a single-tab fallback. */
+export interface PlaceCategoriesPayload {
+  categories: PlaceCategoryTab[];
+}
+
 // Represents a waypoint for the Routes API
 export interface RouteWaypoint {
   address?: string;

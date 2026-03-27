@@ -16,17 +16,17 @@
 
 @import "tailwindcss";
 
-/* OnRoad theme design tokens */
+/* LobbyNext theme design tokens */
 :root {
-  --onroad-bg: #050816;           /* main app background */
-  --onroad-surface: #0f172a;      /* cards / panels */
-  --onroad-surface-soft: #111827; /* softer surface */
-  --onroad-accent: #38bdf8;       /* primary accent (sky blue) */
-  --onroad-accent-soft: #0ea5e9;  /* lighter accent for hovers */
-  --onroad-accent-muted: #1d4ed8; /* secondary accent */
-  --onroad-text: #e5e7eb;         /* main text */
-  --onroad-text-soft: #9ca3af;    /* secondary text */
-  --onroad-danger: #f97373;
+  --lobbynext-bg: #050816;           /* main app background */
+  --lobbynext-surface: #0f172a;      /* cards / panels */
+  --lobbynext-surface-soft: #111827; /* softer surface */
+  --lobbynext-accent: #38bdf8;       /* primary accent (sky blue) */
+  --lobbynext-accent-soft: #0ea5e9;  /* lighter accent for hovers */
+  --lobbynext-accent-muted: #1d4ed8; /* secondary accent */
+  --lobbynext-text: #e5e7eb;         /* main text */
+  --lobbynext-text-soft: #9ca3af;    /* secondary text */
+  --lobbynext-danger: #f97373;
 }
 
 /* Ensure chat-app custom element takes full viewport space */
@@ -34,6 +34,68 @@ chat-app {
   display: block;
   height: 100%;
   width: 100%;
+}
+
+/* Map focus vignette: MUST be a sibling of gmp-map-3d (not inside it) — in-map divs sit under the WebGL canvas. */
+#map-focus-vignette-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+  isolation: isolate;
+  /* --focus-hole-r set inline from camera range (chat-app) */
+  --focus-hole-x: 50%;
+  --focus-hole-y: 50%;
+}
+
+@media (min-width: 640px) {
+  #map-focus-vignette-layer {
+    --focus-hole-x: 44%;
+  }
+}
+
+#map-focus-vignette-layer .map-focus-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Tint stays subtle; blur strength is moderate — mask ramp does the “gradient blur” feel */
+  background: rgba(15, 23, 42, 0.05);
+  /* Wide transition band (px + % of hole) so the frosted layer fades in smoothly, not in one step */
+  --v-falloff: min(220px, max(100px, calc(var(--focus-hole-r) * 0.62)));
+  --v-blur: clamp(10px, calc(8px + var(--focus-hole-r) * 0.035), 18px);
+  -webkit-mask-image: radial-gradient(
+    circle at var(--focus-hole-x) var(--focus-hole-y),
+    transparent 0,
+    transparent max(0px, calc(var(--focus-hole-r) - min(20px, calc(var(--focus-hole-r) * 0.06)))),
+    rgba(0, 0, 0, 0.06) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.08)),
+    rgba(0, 0, 0, 0.14) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.2)),
+    rgba(0, 0, 0, 0.28) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.36)),
+    rgba(0, 0, 0, 0.46) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.54)),
+    rgba(0, 0, 0, 0.64) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.72)),
+    rgba(0, 0, 0, 0.82) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.88)),
+    #000 calc(var(--focus-hole-r) + var(--v-falloff))
+  );
+  mask-image: radial-gradient(
+    circle at var(--focus-hole-x) var(--focus-hole-y),
+    transparent 0,
+    transparent max(0px, calc(var(--focus-hole-r) - min(20px, calc(var(--focus-hole-r) * 0.06)))),
+    rgba(0, 0, 0, 0.06) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.08)),
+    rgba(0, 0, 0, 0.14) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.2)),
+    rgba(0, 0, 0, 0.28) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.36)),
+    rgba(0, 0, 0, 0.46) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.54)),
+    rgba(0, 0, 0, 0.64) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.72)),
+    rgba(0, 0, 0, 0.82) calc(var(--focus-hole-r) + calc(var(--v-falloff) * 0.88)),
+    #000 calc(var(--focus-hole-r) + var(--v-falloff))
+  );
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-mode: alpha;
+  mask-mode: alpha;
+  -webkit-backdrop-filter: blur(var(--v-blur)) saturate(1.02);
+  backdrop-filter: blur(var(--v-blur)) saturate(1.02);
 }
   /* Material Design 3 Light Theme Scrollbar */
   ::-webkit-scrollbar {
@@ -54,7 +116,7 @@ chat-app {
   .place-index-link {
     background-color: transparent;
     border: none;
-    color: var(--onroad-accent);
+    color: var(--lobbynext-accent);
     font-weight: 600; /* semibold */
     padding: 0 1px;
     margin: 0;
@@ -91,16 +153,16 @@ chat-app {
     margin-bottom: 0.25rem; /* mb-1 */
   }
   .chat-message-content a {
-    color: var(--onroad-accent);
+    color: var(--lobbynext-accent);
     text-decoration: none;
   }
   .chat-message-content a:hover {
-    color: var(--onroad-accent-soft);
+    color: var(--lobbynext-accent-soft);
     text-decoration: underline;
   }
   .chat-message-content pre {
     background-color: #020617;
-    color: var(--onroad-text);
+    color: var(--lobbynext-text);
     border: 1px solid #1f2937;
     padding: 0.75rem; /* p-3 */
     border-radius: 0.375rem; /* rounded-md */
@@ -112,7 +174,7 @@ chat-app {
   }
   .chat-message-content code:not(pre > code) {
     background-color: #020617;
-    color: var(--onroad-accent-soft);
+    color: var(--lobbynext-accent-soft);
     padding: 0.125rem 0.25rem; /* px-1 py-0.5 */
     border-radius: 0.25rem; /* rounded-sm */
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -126,7 +188,7 @@ chat-app {
     margin-top: 0.5rem;
     margin-bottom: 0.5rem;
     font-style: italic;
-    color: var(--onroad-text-soft);
+    color: var(--lobbynext-text-soft);
     background-color: #020617;
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
@@ -143,7 +205,7 @@ chat-app {
     border: 1px solid #1f2937;
     padding: 0.5rem; /* p-2 */
     text-align: left;
-    color: var(--onroad-text);
+    color: var(--lobbynext-text);
   }
   .chat-message-content th {
     background-color: #020617;

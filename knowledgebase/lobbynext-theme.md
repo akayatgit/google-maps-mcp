@@ -1,4 +1,4 @@
-## OnRoad UI Theme
+## LobbyNext UI Theme
 
 **Goal**: A dark, road/night–inspired theme with bright sky–blue accents that feels like a driving assistant, applied consistently across chat cards, input, quick answers, and overlays.
 
@@ -8,15 +8,15 @@
 
 Defined in `index.css` using CSS variables:
 
-- **Background**: `--onroad-bg = #050816` (deep navy / night sky)
-- **Surface (cards/panels)**: `--onroad-surface = #0f172a`
-- **Soft surface**: `--onroad-surface-soft = #111827`
-- **Accent (primary)**: `--onroad-accent = #38bdf8` (sky blue)
-- **Accent (hover)**: `--onroad-accent-soft = #0ea5e9`
-- **Accent (secondary)**: `--onroad-accent-muted = #1d4ed8`
-- **Text (primary)**: `--onroad-text = #e5e7eb`
-- **Text (secondary)**: `--onroad-text-soft = #9ca3af`
-- **Danger**: `--onroad-danger = #f97373`
+- **Background**: `--lobbynext-bg = #050816` (deep navy / night sky)
+- **Surface (cards/panels)**: `--lobbynext-surface = #0f172a`
+- **Soft surface**: `--lobbynext-surface-soft = #111827`
+- **Accent (primary)**: `--lobbynext-accent = #38bdf8` (sky blue)
+- **Accent (hover)**: `--lobbynext-accent-soft = #0ea5e9`
+- **Accent (secondary)**: `--lobbynext-accent-muted = #1d4ed8`
+- **Text (primary)**: `--lobbynext-text = #e5e7eb`
+- **Text (secondary)**: `--lobbynext-text-soft = #9ca3af`
+- **Danger**: `--lobbynext-danger = #f97373`
 
 Scrollbar, code blocks, links, blockquotes, and tables are restyled to match these tokens.
 
@@ -94,15 +94,14 @@ This combo makes the input row feel like a single, pill–shaped control.
 
 ## 6. How to extend the theme
 
-- Prefer using the **CSS variables in `index.css`** (`var(--onroad-...)`) when adding new components.
+- Prefer using the **CSS variables in `index.css`** (`var(--lobbynext-...)`) when adding new components.
 - For new cards or panels, reuse:
-  - Background: `var(--onroad-surface)` or `var(--onroad-surface-soft)`
-  - Text: `var(--onroad-text)`
+  - Background: `var(--lobbynext-surface)` or `var(--lobbynext-surface-soft)`
+  - Text: `var(--lobbynext-text)`
   - Border: `#1f2937`
 - For interactive elements (buttons, chips, links), build on:
-  - Default: `var(--onroad-accent)`
-  - Hover: `var(--onroad-accent-soft)`
-  - Disabled/secondary: `var(--onroad-text-soft)` + darker surfaces.
+  - Default: `var(--lobbynext-accent)`
+  - Hover: `var(--lobbynext-accent-soft)`
+  - Disabled/secondary: `var(--lobbynext-text-soft)` + darker surfaces.
 
-Keeping new UI in these ranges will maintain the OnRoad brand feel across the app.
-
+Keeping new UI in these ranges will maintain the LobbyNext brand feel across the app.

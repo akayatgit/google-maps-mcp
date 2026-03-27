@@ -29,6 +29,7 @@ SERVER_API_KEY="YOUR_SERVER_API_KEY_HERE"
 
 - `GOOGLE_MAPS_API_KEY`: used by the frontend (Maps JavaScript API, Places UI Kit).
 - `SERVER_API_KEY`: used by the backend/MCP for Grounding Lite, Gemini API, and supporting Maps APIs (Routes, Places, Elevation).
+- `SUPABASE_ACCESS_TOKEN` (optional): used by the Supabase MCP to read `localities` and `property_listings` (apartments and houses for sale). Create a Personal Access Token at [Supabase Account Tokens](https://supabase.com/dashboard/account/tokens). Run `scripts/supabase-real-estate-schema.sql` in the Supabase SQL editor. If not set, the app uses Google Maps tools only (no listing database).
 
 ---
 

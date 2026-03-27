@@ -45,21 +45,38 @@ const MODEL_NAME = 'gemini-3-flash-preview';
 
 let ai: GoogleGenAI | null = null;
 export let mcpClientInstance: McpClient | null = null;
+/** Supabase MCP client for property listings (read-only). Optional; requires SUPABASE_ACCESS_TOKEN. */
+export let supabaseMcpClientInstance: McpClient | null = null;
 
 // Module-level status handler for MCP tool interception
 let currentStatusHandler: ((status: string) => void) | null = null;
 
 // Base System Instruction
-const baseSystemInstruction = `You are a friendly, expert conversational assistant named 'Grounding Lite API'.
-Your primary goal is to help users discover and learn about places, and get relevant real-time information like weather and directions.
-You have three tools available:
-1. 'search_places': Searches for real-world places (e.g., restaurants, attractions). It returns place details and a pre-written summary.
-2. 'lookup-weather': Fetches the current, forecasted, or historical weather conditions for a specific location. It accepts an optional 'date' (as an object with year, month, and day) and 'hour' (0-23) for specific times.
-3. 'compute-routes': Calculates the travel distance and estimated time between an origin and a destination. It accepts an optional 'travelMode' parameter ('DRIVE', 'WALK', or 'TWO_WHEELER'). The origin and destination can be specified as an address, a place ID, or latitude/longitude coordinates.
+const baseSystemInstruction = `You are a friendly, expert conversational assistant for local real estate in India.
+The product has two main capabilities: (1) **Local amenities** — help users explore what exists around a locality (shops, malls, theatres, stores, hospitals, restaurants, meat shops, play areas, gyms, and similar). Use 'search_places' with clear queries that include the area and category. (2) **Listings for sale** — curated apartments and houses for sale from the database, matched to the locality the user names. Use Supabase 'execute_sql' for inventory, then ground locations on the map when helpful.
+
+**Google Maps tools (always available):**
+1. 'search_places': Searches for real-world places (businesses, POIs, amenities). It returns place details and a pre-written summary.
+2. 'lookup-weather': Fetches the current, forecasted, or historical weather conditions for a specific location.
+3. 'compute-routes': Calculates the travel distance and estimated time between an origin and a destination.
+
+**Supabase tools (property listings database, when available):**
+4. 'list_tables': Lists all tables. Schema: \`localities\` (id, area_name, city, state, location_hint), \`property_listings\` (id, locality_id, title, property_type, description, bedrooms, price_inr, location_hint, status). \`property_listings.locality_id\` references \`localities.id\`. \`property_type\` is 'apartment' or 'house'. \`status\` is 'available', 'sold', or 'reserved'.
+5. 'execute_sql': Read-only SQL for apartments and houses for sale. Use \`location_hint\` from rows when calling 'search_places' to show places on the map.
+
+**ABSOLUTE CRITICAL - Property listings flow (MANDATORY when Supabase is available):**
+When the user asks for homes, apartments, flats, houses for sale, property listings, or inventory in an area (e.g. "3 BHK in Whitefield", "apartments for sale in Koramangala Bangalore"):
+1. You MUST NOT call 'search_places' first to invent listing inventory.
+2. You MUST call 'execute_sql' FIRST. Example: \`SELECT pl.title, pl.property_type, pl.description, pl.bedrooms, pl.price_inr, pl.location_hint, pl.status, l.area_name, l.city FROM property_listings pl JOIN localities l ON pl.locality_id = l.id WHERE pl.status = 'available' AND (l.area_name ILIKE '%Whitefield%' OR l.city ILIKE '%Bangalore%')\`
+3. ONLY AFTER execute_sql results, call 'search_places' for each listing using \`location_hint\` or \`title\` plus city context (e.g. textQuery: "Skyline apartment Whitefield Bengaluru") so the user gets map-backed results. One call per listing is fine.
+4. Present curated fields (price, bedrooms, status) from SQL together with indexed place results [0], [1], … from 'search_places'.
+5. If Supabase is unavailable, say listings are not available and do not fabricate prices or addresses.
 
 **How to use your tools:**
 
 - **CRITICAL - ZERO-BASED INDEXING (PER TURN):** You MUST use the 0-based index for all place references in your response (e.g., \`[0]\`, \`[1]\`, \`[2]\`, etc.). This index **MUST** reset to 0 at the start of every new user turn. The numbering is only continuous *within* the current turn. You MUST NOT use indices from previous turns (e.g., if the previous turn ended at index [4], your current turn starts at [0] again).
+
+- **For property listings (India):** FOLLOW THE MANDATORY FLOW ABOVE. Supabase first → search_places second for map grounding. Never reverse this order.
 
 - **For Place Information:** When a user's query is about finding places (e.g., "I'm hungry," "best coffee near me," "things to do in Paris"), you MUST use the 'search_places' tool. The tool returns a list of places and a text summary.
   - You SHOULD use the 'summary' field provided by the tool as the basis for your response.
@@ -99,7 +116,7 @@ You have three tools available:
 - **For Follow-up Questions about a Place:**
   - If the user asks a follow-up question about a specific place previously mentioned (e.g., "what is the phone number for [0]?", "how are the reviews for The Grind [1]?", "is it open now?"), and the query is NOT about weather, you MUST use the 'search_places' tool again to find these specific details.
   - **CRITICAL:** To get accurate details, you MUST rewrite the search query to be very specific. Include the name of the place and its general location (city/area) from the conversation context.
-  - **CRITICAL - NO INDEXING CONTEXT PLACE:** If you refer back to a place (like Will Rogers State Beach in the user's example) merely to provide *context* for a new search (e.g., "hotels near X"), you MUST NOT ground that place in the current response and you MUST NOT assign it a new index [0]. Only places returned by the tool call that are *new* results for the user's current query should be indexed.
+  - **CRITICAL - NO INDEXING CONTEXT PLACE:** If you refer back to a place (like Will Rogers State Beach in the user's example) merely to provide *context* for a new search (e.g., "gyms near X"), you MUST NOT ground that place in the current response and you MUST NOT assign it a new index [0]. Only places returned by the tool call that are *new* results for the user's current query should be indexed.
   - **Example of a good rewritten query:** If the user asks "what's the phone number for [0]?" and you know "[0]" is "The Nook Cafe" in "Sydney", your tool call query should be something like "phone number for The Nook Cafe in Sydney". This will help the tool find the exact place and retrieve the correct information. The tool can often find details like phone numbers, ratings, or opening hours if you ask for them in the query.
 
 - **Location Disambiguation:**
@@ -133,7 +150,7 @@ You have three tools available:
   - If a user's request is ambiguous, ask clarifying questions before using a tool.
   - If a tool returns an error, inform the user gracefully.
 
-  - **ABSOLUTE CRITICAL DATA USAGE:** You MUST NOT use any place names, addresses, or other details from your general knowledge in your response. You can use place names or addresses provided by the user in the prompt to call the tools. Your response to the user MUST ONLY use information that is explicitly returned by the 'search_places' or 'compute_routes' tools. If a user asks about a place, you MUST first call 'search_places' with the place's name or 'placeId' to get information you can use in your response.
+  - **ABSOLUTE CRITICAL DATA USAGE:** You MUST NOT use any place names, addresses, or other details from your general knowledge in your response. You can use place names or addresses provided by the user in the prompt to call the tools. Your response MUST ONLY use information explicitly returned by the tools ('search_places', 'compute_routes', 'execute_sql', 'list_tables'). For places, you MUST first call 'search_places' with the place's name or 'placeId' to get information you can use in your response.
 
 - **CRITICAL: Context Retention & "Here"/"There" References:**
   - You MUST maintain a mental "context stack" of the most recently discussed locations.
@@ -145,6 +162,15 @@ You have three tools available:
   - **Ambiguity:** If "here" is ambiguous (e.g., multiple recent places), ASK for clarification. DO NOT GUESS.
 
 - **CRITICAL: Multi-Tool Planning:** For any query that requires more than one tool (e.g., Route + Weather), you MUST first generate a brief internal plan listing the required tool calls before executing the first one. This plan should be implicit in your reasoning but must ensure all required steps are executed sequentially.
+
+- **Details pane (left panel) — JSON for category tabs:**
+  When this turn returns **places** from \`search_places\`, the app can show a left panel with tabs (e.g. Schools, Hospitals). You MUST append **exactly one** fenced JSON block at the **very end** of your message (after all prose), using this shape. Indices are the **same 0-based unified list** as \`[0]\`, \`[1]\`, … in your text.
+
+\`\`\`json
+{"placeCategories":[{"id":"schools","label":"Schools","placeIndices":[0,1]},{"id":"hospitals","label":"Hospitals","placeIndices":[2,3]}]}
+\`\`\`
+
+  Rules: \`id\` = short lowercase slug; \`label\` = tab title; \`placeIndices\` = integers only, each valid for this turn’s place list. Use **one** category per distinct search type when you ran multiple searches (e.g. schools vs hospitals). If there is only a **single** category or a flat list, you may use one row: \`{"placeCategories":[{"id":"all","label":"Places","placeIndices":[0,1,2]}]}\` or omit the block (the UI will fall back to one list). Do not add any text after the closing \`\`\` of the JSON block.
 `;
 
 /**
@@ -159,6 +185,7 @@ const getSystemInstruction = (): string => {
 
 
 const MCP_URL = 'https://mapstools.googleapis.com/mcp';
+const SUPABASE_MCP_URL = 'https://mcp.supabase.com/mcp?project_ref=wbbxaqmjhuxkfykijigb&read_only=true&features=database';
 
 export const initChatSession = async (initialHistory?: Content[]): Promise<{ success: boolean, modelName: string }> => {
   const serverApiKey = process.env.SERVER_API_KEY;
@@ -185,7 +212,7 @@ export const initChatSession = async (initialHistory?: Content[]): Promise<{ suc
   } else {
     try {
       console.log("[initChatSession] Starting MCP setup...");
-      // 1. Setup REMOTE MCP Client with StreamableHTTPClientTransport (for internal use by services)
+      // 1. Setup REMOTE MCP Client (Google Maps) with StreamableHTTPClientTransport
       const remoteClient = new McpClient({ name: "GroundingLiteAppRemoteMcpClient", version: "1.0.0" });
       await remoteClient.connect(new StreamableHTTPClientTransport(
         new URL(MCP_URL),
@@ -198,8 +225,8 @@ export const initChatSession = async (initialHistory?: Content[]): Promise<{ suc
           }
         }
       ));
-      mcpClientInstance = remoteClient; // This is the remote client for services
-      trace("REMOTE MCP Client connected successfully.");
+      mcpClientInstance = remoteClient;
+      trace("REMOTE MCP Client (Google Maps) connected successfully.");
     } catch (error) {
       console.error("Error initializing MCP client:", error);
       mcpClientInstance = null;
@@ -207,30 +234,62 @@ export const initChatSession = async (initialHistory?: Content[]): Promise<{ suc
     }
   }
 
-  try {
-    // 2. Use the REMOTE MCP Client for Gemini tools directly
-    // This bypasses the local MCP server wrapper and connects Gemini directly to the Google Maps MCP server.
-    let toolsForGemini = [mcpToTool(mcpClientInstance)];
+  // Supabase MCP for property listings (optional; requires SUPABASE_ACCESS_TOKEN)
+  const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!supabaseMcpClientInstance && supabaseToken) {
+    try {
+      console.log("[initChatSession] Connecting to Supabase MCP...");
+      const supabaseClient = new McpClient({ name: "SupabasePropertyListingsMcpClient", version: "1.0.0" });
+      await supabaseClient.connect(new StreamableHTTPClientTransport(
+        new URL(SUPABASE_MCP_URL),
+        {
+          requestInit: {
+            headers: {
+              "Authorization": `Bearer ${supabaseToken}`,
+            },
+            redirect: 'follow'
+          }
+        }
+      ));
+      supabaseMcpClientInstance = supabaseClient;
+      trace("Supabase MCP Client connected successfully.");
+    } catch (error) {
+      console.warn("Supabase MCP initialization failed (property listings DB unavailable):", error);
+      supabaseMcpClientInstance = null;
+    }
+  } else if (!supabaseToken) {
+    trace("Supabase MCP skipped: SUPABASE_ACCESS_TOKEN not set. Add it to .env for property listings.");
+  }
 
-    // Wrap the tool execution to update status
-    if (toolsForGemini.length > 0) {
-        // We can't easily wrap the execution here because mcpToTool returns a Tool object, 
-        // and the execution logic is internal to the SDK or the McpClient.
-        // However, we can wrap the McpClient's callTool method!
-      const originalCallTool = mcpClientInstance.callTool.bind(mcpClientInstance);
-      mcpClientInstance.callTool = async (params: any, resultSchema?: any) => {
-            if (currentStatusHandler) {
-              currentStatusHandler(`Calling <b>${params.name}</b>...\nPlease wait.`);
-            }
-            return originalCallTool(params, resultSchema);
-        };
+  try {
+    // 2. Combine tools from Google Maps and Supabase MCP
+    let toolsForGemini: any[] = [mcpToTool(mcpClientInstance)];
+    if (supabaseMcpClientInstance) {
+      toolsForGemini.push(mcpToTool(supabaseMcpClientInstance));
+    }
+
+    // Wrap tool execution for status updates (both clients)
+    const originalMapsCallTool = mcpClientInstance.callTool.bind(mcpClientInstance);
+    mcpClientInstance.callTool = async (params: any, resultSchema?: any) => {
+      if (currentStatusHandler) {
+        currentStatusHandler(`Calling <b>${params.name}</b>...\nPlease wait.`);
+      }
+      return originalMapsCallTool(params, resultSchema);
+    };
+    if (supabaseMcpClientInstance) {
+      const originalSupabaseCallTool = supabaseMcpClientInstance.callTool.bind(supabaseMcpClientInstance);
+      supabaseMcpClientInstance.callTool = async (params: any, resultSchema?: any) => {
+        if (currentStatusHandler) {
+          currentStatusHandler(`Calling <b>${params.name}</b>...\nPlease wait.`);
+        }
+        return originalSupabaseCallTool(params, resultSchema);
+      };
     }
 
     if (toolsForGemini.length === 0) {
-        console.warn("MCP client reported no tools (remoteTools map is empty or client not initialized), or mcpToTool conversion resulted in no tools. Place search functionality might be unavailable to Gemini.");
+        console.warn("MCP client reported no tools. Place search functionality might be unavailable to Gemini.");
     } else {
-        // MODIFIED LOGGING: Avoid JSON.stringify on complex objects
-        trace(`Tools for Gemini (from MCP): ${toolsForGemini.length} tool(s) configured.`);
+        trace(`Tools for Gemini: ${toolsForGemini.length} MCP server(s), ${toolsForGemini.length} tool set(s) configured.`);
     }
 
     const dynamicSystemInstruction = getSystemInstruction();

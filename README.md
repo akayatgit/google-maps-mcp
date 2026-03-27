@@ -6,6 +6,15 @@
 
 This repository contains a sample application demonstrating the use of [**Grounding Lite**](https://developers.google.com/maps/ai/grounding-lite) with the [Gemini API](https://ai.google.dev/gemini-api/docs) to provide spatially grounded responses using Google Maps Platform data. The application uses the agent to converse and a companion 3D Google Maps.
 
+### Real estate focus (this project)
+
+The assistant is aimed at **local real estate exploration** in India with two capabilities:
+
+1. **Neighborhood amenities** — Discover shops, malls, theatres, stores, hospitals, restaurants, meat shops, play areas, gyms, and similar around a locality using Google Maps (`search_places`).
+2. **Homes for sale** — Curated **apartments and houses** from Supabase, keyed by locality. The backend connects to Supabase via MCP (read-only) when `SUPABASE_ACCESS_TOKEN` is set.
+
+**Database setup:** Run `scripts/supabase-real-estate-schema.sql` in the [Supabase SQL Editor](https://supabase.com/dashboard) for your linked project. That script drops legacy `dream_stays` / `cities` tables and creates `localities`, `property_listings`, a `listings_by_locality` view, and seed data for Bangalore neighborhoods.
+
 Please refer to the official documentation for more details: [Grounding Lite Documentation](https://developers.google.com/maps/ai/grounding-lite).
 
 ## Architecture
@@ -104,6 +113,13 @@ For the server-side (Maps Platform MCP calls and Gemini API calls), use:
 ```
 SERVER_API_KEY="YOUR_SERVER_API_KEY_HERE"
 ```
+
+Optional — Supabase MCP for property listings (same project as in `conversationalAIService.ts` or your own; update the MCP URL if you use a different project):
+```
+SUPABASE_ACCESS_TOKEN="YOUR_SUPABASE_PERSONAL_ACCESS_TOKEN"
+```
+
+Create a personal access token under [Supabase Account → Access Tokens](https://supabase.com/dashboard/account/tokens). Apply `scripts/supabase-real-estate-schema.sql` before relying on listing queries.
 
 ## Architecture
 

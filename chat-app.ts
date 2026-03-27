@@ -19,6 +19,10 @@ declare const google: any;
 declare const gtag: any;
 import { isSameLatLng, getWeatherMarkerIcon, calculateTiltOffsetLat } from './utils/mapUtils.ts';
 import { cleanPlaceName, formatPlaceNameForLabel, truncateLabel, decodeHTMLEntities } from './utils/placeUtils.ts';
+import {
+  buildFallbackPlaceCategories,
+  parsePlaceCategoriesFromModelText,
+} from './utils/placeCategoryParser.ts';
 import { geocodeAddress, fetchElevationApi } from './services/apiClientService.ts';
 import { getRepoStarCount } from './services/githubService.ts';
 import { LitElement, html, PropertyValues } from 'lit';
@@ -32,6 +36,7 @@ import {
   ChatMessage,
   ApiKeysState,
   Place,
+  PlaceCategoriesPayload,
   WeatherData,
   RouteData,
   LatLng,
@@ -52,6 +57,105 @@ import './components/source-card';
 // --- Constants and Utility Functions from App.tsx ---
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+/** Custom marker name pills: high contrast vs hybrid basemap labels (white/yellow road text). */
+const MAP_APP_LABEL_PILL_STYLE =
+  'max-width: 180px; padding: 3px 8px; border-radius: 6px; background: rgba(76, 29, 149, 0.96); color: #fef08a; font-family: system-ui, -apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif; font-size: 10px; font-weight: 600; line-height: 1.15; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 2px solid #f59e0b; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.88), 0 0 12px rgba(245, 158, 11, 0.4); letter-spacing: 0.03em;';
+
+/** Place pins: orange family — reads as “app UI”, not water/park map symbology. */
+const MAP_PLACE_COLORS = {
+  fill: '#ea580c',
+  fillSelected: '#c2410c',
+  border: '#9a3412',
+  borderSelected: '#7c2d12',
+  ringGradient:
+    'radial-gradient(circle at 30% 20%, #ffedd5 0, #fdba74 42%, #fb923c 100%)',
+} as const;
+
+const MAP_ROUTE_LINE_COLOR = '#f59e0b';
+
+/** Geographic limits: camera + gestures cannot leave this box (Map3DElement `bounds`). */
+const SOUTH_INDIA_BOUNDS = {
+  south: 6.35,
+  west: 74.0,
+  north: 19.65,
+  east: 85.75,
+} as const;
+
+/** Default view: Bengaluru. */
+const SOUTH_INDIA_DEFAULT_CENTER_STR = '12.9716, 77.5946';
+/** Opening zoom: regional South India (not global). */
+const SOUTH_INDIA_DEFAULT_RANGE_M = 950_000;
+/**
+ * Hard cap on camera distance (m). Zoom-out past this is clamped immediately so users
+ * cannot pull back to a world / extra-peninsula view.
+ */
+const SOUTH_INDIA_MAX_CAMERA_RANGE_M = 2_050_000;
+
+function clampLatLngToSouthIndia(lat: number, lng: number): { lat: number; lng: number } {
+  return {
+    lat: Math.min(SOUTH_INDIA_BOUNDS.north, Math.max(SOUTH_INDIA_BOUNDS.south, lat)),
+    lng: Math.min(SOUTH_INDIA_BOUNDS.east, Math.max(SOUTH_INDIA_BOUNDS.west, lng)),
+  };
+}
+
+/** Read center from gmp-map-3d / LatLngAltitude-like values. */
+function parseMap3dCenter(center: unknown): { lat: number; lng: number; altitude: number } | null {
+  if (center == null) {
+    return null;
+  }
+  if (typeof center === 'string') {
+    const parts = center.split(',').map((p) => parseFloat(p.trim()));
+    if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+      return { lat: parts[0], lng: parts[1], altitude: Number.isFinite(parts[2]) ? parts[2] : 0 };
+    }
+    return null;
+  }
+  const c = center as Record<string, unknown>;
+  let lat: number | undefined;
+  let lng: number | undefined;
+  if (typeof c.lat === 'number' && typeof c.lng === 'number') {
+    lat = c.lat;
+    lng = c.lng;
+  } else if (typeof (c as any).lat === 'function' && typeof (c as any).lng === 'function') {
+    lat = (c as any).lat();
+    lng = (c as any).lng();
+  }
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  const alt = typeof c.altitude === 'number' && Number.isFinite(c.altitude) ? c.altitude : 0;
+  return { lat, lng, altitude: alt };
+}
+
+/** Default vertical FOV for Map3DElement (see Maps JS 3D map docs). */
+const MAP3D_DEFAULT_VERTICAL_FOV_DEG = 35;
+/** Padding on ground radius so the ring clears pins. */
+const VIGNETTE_CLUSTER_PADDING = 1.2;
+/** Extra px for pin pill + number above the map tile (labels extend past lat/lng). */
+const VIGNETTE_PIN_CHROME_PADDING_PX = 72;
+/** Minimum ground radius (m) so a single pin isn’t clipped at the circle edge. */
+const VIGNETTE_MIN_CLUSTER_RADIUS_M = 200;
+
+/** Fallback when cluster can’t be computed — range-only hole (px). */
+function focusHoleRadiusFromRangeMeters(rangeMeters: number): number {
+  const clamped = Math.max(300, Math.min(35_000_000, rangeMeters));
+  const rMin = 64;
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
+  const rMax = Math.min(440, vw * 0.44);
+  const logMin = Math.log(300);
+  const logMax = Math.log(35_000_000);
+  const logR = Math.log(clamped);
+  const t = (logMax - logR) / (logMax - logMin);
+  const tClamped = Math.max(0, Math.min(1, t));
+  return rMin + tClamped * (rMax - rMin);
+}
+
+/** Ground span (meters) visible vertically at map center for a given camera range. */
+function verticalMetersVisibleAtRange(rangeMeters: number, fovDeg: number): number {
+  const rad = (fovDeg * Math.PI) / 180;
+  return 2 * rangeMeters * Math.tan(rad / 2);
+}
 
 const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
@@ -132,6 +236,12 @@ export class ChatApp extends LitElement {
   @state()
   private placeIdToIndexMap: Map<string, number> = new Map();
 
+  /** Left pane: tabs + lists; filled from model JSON or a single "Places" fallback. */
+  @state()
+  private placeCategoriesPanel: PlaceCategoriesPayload | null = null;
+
+  @state()
+  private activePlaceCategoryId: string | null = null;
 
   @state()
   private selectedPlaceIdForDetails: string | null = null;
@@ -205,22 +315,35 @@ export class ChatApp extends LitElement {
   private hasMoved: boolean = false;
 
 
-  // New state for 3D Map Camera
+  // New state for 3D Map Camera (defaults: South India — see SOUTH_INDIA_* constants)
   @state()
-  private mapCenter: string = '46.603354, 1.888334'; // lat, lng (Centered on France)
+  private mapCenter: string = SOUTH_INDIA_DEFAULT_CENTER_STR;
   @state()
-  private mapRange: number = 12000000; // Default to 12000km view (meters)
+  private mapRange: number = SOUTH_INDIA_DEFAULT_RANGE_M;
   @state()
   private mapTilt: number = 30;
   @state()
   private mapHeading: number = 0;
 
+  /** Mirrors live camera range for vignette sizing (updated from gmp-rangechange + flyCameraTo). */
+  @state()
+  private vignetteRangeMeters: number = SOUTH_INDIA_DEFAULT_RANGE_M;
+
+  private mapRangeListenerAttached: boolean = false;
+  private mapRangeListenerEl: HTMLElement | null = null;
+  private mapRangeListenerFn: (() => void) | null = null;
+  private vignetteRangeSyncRafId: number = 0;
+  private windowResizeHandler: (() => void) | null = null;
+
   @state()
   private isMapBlurred: boolean = false;
 
+  /** Set to true to show suggestion chips above the input. Hidden for now; restore when needed. */
+  @state() private showSuggestions: boolean = false;
+
   private quickAnswers: string[] = [
-    "What are the best beaches near Santa Monica?",
-    "What is the driving route from Los Angeles to San Diego?",
+    "What malls, hospitals, and gyms are near Whitefield, Bangalore?",
+    "Show apartments and houses for sale in Koramangala, Bangalore",
   ];
 
   private getDynamicQuickAnswers(): string[] {
@@ -236,13 +359,13 @@ export class ChatApp extends LitElement {
 
       answers.push(`Show me the route to this place`);
       answers.push(`What is the weather at this place?`);
-      answers.push(`Find hotels near this place`);
+      answers.push(`Find shops, restaurants, and gyms near this place`);
       if (places && places.length > 1) {
         answers.push(`Compare the places found`);
       }
     } else if (route) {
       // Contextual prompts for Routes
-      answers.push(`Find hotels near the destination`);
+      answers.push(`Find amenities near the destination`);
       answers.push(`What is the weather at the destination?`);
     } else if (weather) {
       // Contextual prompts for Weather
@@ -253,9 +376,9 @@ export class ChatApp extends LitElement {
 
     // Fallback/General suggestions if no specific data is present
     if (answers.length === 0) {
-      answers.push("Plan a route (e.g., SF to LA)");
-      answers.push("Search for restaurants or hotels");
-      answers.push("Check the weather in a specific city");
+      answers.push("List meat shops and supermarkets near Indiranagar, Bangalore");
+      answers.push("Homes and apartments for sale in HSR Layout, Bangalore");
+      answers.push("Check the weather in a specific area");
     }
 
     // Ensure we return a maximum of 3 recommendations
@@ -346,6 +469,93 @@ export class ChatApp extends LitElement {
     return this;
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.windowResizeHandler = () => this.requestUpdate();
+    window.addEventListener('resize', this.windowResizeHandler);
+  }
+
+  disconnectedCallback(): void {
+    if (this.vignetteRangeSyncRafId) {
+      cancelAnimationFrame(this.vignetteRangeSyncRafId);
+      this.vignetteRangeSyncRafId = 0;
+    }
+    if (this.windowResizeHandler) {
+      window.removeEventListener('resize', this.windowResizeHandler);
+      this.windowResizeHandler = null;
+    }
+    if (this.mapRangeListenerEl && this.mapRangeListenerFn) {
+      this.mapRangeListenerEl.removeEventListener('gmp-rangechange', this.mapRangeListenerFn);
+      this.mapRangeListenerEl.removeEventListener('gmp-camerapositionchange', this.mapRangeListenerFn);
+      this.mapRangeListenerEl.removeEventListener('gmp-centerchange', this.mapRangeListenerFn);
+    }
+    this.mapRangeListenerAttached = false;
+    this.mapRangeListenerEl = null;
+    this.mapRangeListenerFn = null;
+    super.disconnectedCallback();
+  }
+
+  /** Enforce South India max zoom-out + center clamp; sync vignette + Lit camera state (rAF-throttled). */
+  private syncVignetteRangeFromMapElement() {
+    const el = this.mapRangeListenerEl;
+    if (!el) {
+      return;
+    }
+    if (this.vignetteRangeSyncRafId) {
+      cancelAnimationFrame(this.vignetteRangeSyncRafId);
+    }
+    this.vignetteRangeSyncRafId = requestAnimationFrame(() => {
+      this.vignetteRangeSyncRafId = 0;
+      const mapEl = el as any;
+      let r = mapEl.range;
+      let didClamp = false;
+      if (typeof r === 'number' && Number.isFinite(r) && r > SOUTH_INDIA_MAX_CAMERA_RANGE_M) {
+        mapEl.range = SOUTH_INDIA_MAX_CAMERA_RANGE_M;
+        r = SOUTH_INDIA_MAX_CAMERA_RANGE_M;
+        didClamp = true;
+      }
+
+      const parsed = parseMap3dCenter(mapEl.center);
+      if (parsed) {
+        const cl = clampLatLngToSouthIndia(parsed.lat, parsed.lng);
+        if (cl.lat !== parsed.lat || cl.lng !== parsed.lng) {
+          mapEl.center = { lat: cl.lat, lng: cl.lng, altitude: parsed.altitude };
+          didClamp = true;
+        }
+      }
+
+      if (typeof r === 'number' && Number.isFinite(r) && r > 0 && this.vignetteRangeMeters !== r) {
+        this.vignetteRangeMeters = r;
+      }
+      if (didClamp && typeof r === 'number' && Number.isFinite(r) && r > 0) {
+        this.mapRange = r;
+        const afterCenter = parseMap3dCenter(mapEl.center);
+        if (afterCenter) {
+          this.mapCenter = `${afterCenter.lat}, ${afterCenter.lng}`;
+        }
+      }
+    });
+  }
+
+  /** Sync vignette hole size from live 3D map camera range (user zoom / gestures). */
+  private ensureMapRangeListener() {
+    if (this.mapRangeListenerAttached) {
+      return;
+    }
+    const el = (this.mapRef ?? document.getElementById('map-3d')) as HTMLElement | null;
+    if (!el) {
+      return;
+    }
+    this.mapRangeListenerAttached = true;
+    this.mapRangeListenerEl = el;
+    const fn = () => this.syncVignetteRangeFromMapElement();
+    this.mapRangeListenerFn = fn;
+    el.addEventListener('gmp-rangechange', fn);
+    el.addEventListener('gmp-camerapositionchange', fn);
+    el.addEventListener('gmp-centerchange', fn);
+    queueMicrotask(() => this.syncVignetteRangeFromMapElement());
+  }
+
   // --- Lifecycle Methods (replaces React's useEffect) ---
 
   // Runs once after the component is first rendered to the DOM (replaces useEffect with empty dependency array for initialization)
@@ -394,6 +604,10 @@ export class ChatApp extends LitElement {
 
     // Update marker styles when selectedPlaceIdForDetails changes
     // The Place Details Widget is now rendered declaratively in the chat container.
+
+    if (this.mapApiReady) {
+      queueMicrotask(() => this.ensureMapRangeListener());
+    }
   }
 
   // --- Initialization Logic ---
@@ -525,7 +739,7 @@ export class ChatApp extends LitElement {
                 id: generateId(),
                 role: 'model',
                 parts: [{
-                  text: `Hello, how can I assist you on the road today?
+                  text: `Ask anything about your locality. Which area are you interested in?
 ${modelDisplay}
 ${buttonContainer}`
                 }],
@@ -645,6 +859,8 @@ ${buttonContainer}`
         calculatedRange = forceRange;
       }
 
+      calculatedRange = Math.min(calculatedRange, SOUTH_INDIA_MAX_CAMERA_RANGE_M);
+
       // We rely on flyCameraTo to set the range imperatively.
       // We remove the state update for mapRange to prevent declarative attribute reset.
       // this.mapRange = calculatedRange;
@@ -703,11 +919,16 @@ ${buttonContainer}`
       }
 
       trace("cameraAltitude : " + cameraAltitude)
+      let focusLat = finalCenterLatLng.lat() - (latOffset * 0.9);
+      let focusLng = finalCenterLatLng.lng();
+      const focusClamped = clampLatLngToSouthIndia(focusLat, focusLng);
+      focusLat = focusClamped.lat;
+      focusLng = focusClamped.lng;
       // Prepare camera options
       const cameraOptions = {
         center: {
-          lat: finalCenterLatLng.lat() - (latOffset * 0.9), // Apply latitude offset to compensate for camera tilt (shifts center south)
-          lng: finalCenterLatLng.lng(),
+          lat: focusLat,
+          lng: focusLng,
           altitude: cameraAltitude,
         },
         heading: this.mapHeading,
@@ -726,6 +947,14 @@ ${buttonContainer}`
 
           // Update declarative state after imperative call to prevent race condition/override
           this.mapCenter = `${cameraOptions.center.lat.toString()}, ${cameraOptions.center.lng.toString()}`;
+          this.vignetteRangeMeters = calculatedRange;
+          queueMicrotask(() => {
+            const live = this.readLiveMapRangeFromElement();
+            if (live != null) {
+              this.vignetteRangeMeters = live;
+            }
+            this.requestUpdate();
+          });
         } catch (e) {
           console.error("[Map Camera] flyCameraTo failed:", e);
         }
@@ -736,6 +965,7 @@ ${buttonContainer}`
         this.mapTilt = cameraOptions.tilt;
         this.mapHeading = cameraOptions.heading;
         this.mapRange = cameraOptions.range;
+        this.vignetteRangeMeters = cameraOptions.range;
       }
 
       // Note: We no longer need the single point logic here as it's handled by the selectedPlaceIdForDetails override.
@@ -1211,12 +1441,28 @@ ${buttonContainer}`
                   }
                 }
 
+                let textForChat = finalAccumulatedText;
+                if (placesThisTurn.length > 0) {
+                  const parsed = parsePlaceCategoriesFromModelText(
+                    finalAccumulatedText,
+                    placesThisTurn.length,
+                  );
+                  this.placeCategoriesPanel =
+                    parsed.payload ?? buildFallbackPlaceCategories(placesThisTurn.length);
+                  this.activePlaceCategoryId =
+                    this.placeCategoriesPanel.categories[0]?.id ?? null;
+                  textForChat = parsed.displayText;
+                } else {
+                  this.placeCategoriesPanel = null;
+                  this.activePlaceCategoryId = null;
+                }
+
                 let sources: string[] | undefined;
                 if (exchangesFromService && exchangesFromService.length > 0) {
                   sources = this.extractSourceUrls(exchangesFromService);
                 }
 
-                this.addOrUpdateMessageInChat(this.currentAiMessageIdRef!, 'model', [{ text: finalAccumulatedText }], true, undefined, localWeatherData ?? undefined, localRouteData ?? undefined, placesThisTurn.length > 0 ? placesThisTurn : undefined, exchangesFromService, sources);
+                this.addOrUpdateMessageInChat(this.currentAiMessageIdRef!, 'model', [{ text: textForChat }], true, undefined, localWeatherData ?? undefined, localRouteData ?? undefined, placesThisTurn.length > 0 ? placesThisTurn : undefined, exchangesFromService, sources);
 
               } else if (data.error) {
                 this.addOrUpdateMessageInChat(this.currentAiMessageIdRef!, 'model', [{ text: `**Error:** ${data.error}` }], true, data.error);
@@ -1500,35 +1746,41 @@ ${buttonContainer}`
     const title = `Weather: ${data.weatherCondition?.description?.text || 'Click for details'}`;
 
     // Build a circular marker shell to wrap the SVG icon with colored ring and soft shadows
+    const weatherAddress = data.returnedLocation?.address || 'Weather Location';
     const weatherMarkerHtml = `
-      <div
-        style="
-          width: 56px;
-          height: 56px;
-          border-radius: 9999px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: radial-gradient(circle at 30% 20%, #f9fafb 0, #e5e7eb 35%, #d1d5db 100%);
-          border: 4px solid #8E3AF0;
-          box-shadow:
-            0 4px 10px rgba(15, 23, 42, 0.6),
-            0 0 12px rgba(139, 92, 246, 0.75);
-        "
-      >
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <div style="${MAP_APP_LABEL_PILL_STYLE} max-width: 160px;">
+          ${weatherAddress}
+        </div>
         <div
           style="
-            width: 40px;
-            height: 40px;
+            width: 56px;
+            height: 56px;
             border-radius: 9999px;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #111827;
-            color: #ffffff;
+            background: radial-gradient(circle at 30% 20%, #ede9fe 0, #ddd6fe 40%, #c4b5fd 100%);
+            border: 4px solid #7c3aed;
+            box-shadow:
+              0 4px 10px rgba(15, 23, 42, 0.65),
+              0 0 14px rgba(245, 158, 11, 0.55);
           "
         >
-          ${iconSvg}
+          <div
+            style="
+              width: 40px;
+              height: 40px;
+              border-radius: 9999px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: #4c1d95;
+              color: #fef08a;
+            "
+          >
+            ${iconSvg}
+          </div>
         </div>
       </div>
     `;
@@ -1539,14 +1791,13 @@ ${buttonContainer}`
         position=${position}
         clickable="true"
         title=${title}
-        label=${data.returnedLocation?.address || 'Weather Location'}
         collision-behavior="REQUIRED_AND_HIDES_OPTIONAL"
         .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
         extruded="true"
         draws-when-occluded="true"
         z-index="1000"
         @click=${(e: Event) => this.handleWeatherMarkerClick(e, data)}
-        ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, '', false, '#8E3AF0', '#FFFFFF', 'darkgrey', weatherMarkerHtml))}
+        ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, '', false, '#7c3aed', '#f59e0b', '#fef08a', weatherMarkerHtml))}
       >
       </gmp-marker-3d>
     `;
@@ -1571,26 +1822,7 @@ ${buttonContainer}`
       );
       const originMarkerHtml = `
         <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
-          <div
-            style="
-              max-width: 160px;
-              padding: 2px 6px;
-              border-radius: 9999px;
-              background: rgba(6, 78, 59, 0.92);
-              color: #bbf7d0;
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-              font-size: 10px;
-              font-weight: 500;
-              line-height: 1.1;
-              text-align: center;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              box-shadow:
-                0 2px 4px rgba(15, 23, 42, 0.7),
-                0 0 6px rgba(16, 185, 129, 0.6);
-            "
-          >
+          <div style="${MAP_APP_LABEL_PILL_STYLE} max-width: 160px;">
             ${originLabel}
           </div>
           <div
@@ -1602,10 +1834,10 @@ ${buttonContainer}`
               align-items: center;
               justify-content: center;
               background: radial-gradient(circle at 30% 20%, #dcfce7 0, #bbf7d0 40%, #86efac 100%);
-              border: 4px solid #16a34a;
+              border: 4px solid #059669;
               box-shadow:
-                0 4px 10px rgba(15, 23, 42, 0.6),
-                0 0 12px rgba(22, 163, 74, 0.75);
+                0 4px 10px rgba(15, 23, 42, 0.65),
+                0 0 14px rgba(245, 158, 11, 0.45);
             "
           >
             <div
@@ -1616,8 +1848,8 @@ ${buttonContainer}`
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: #022c22;
-                color: #ccffcc;
+                background: #064e3b;
+                color: #fef08a;
                 font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 font-weight: 700;
                 font-size: 18px;
@@ -1638,7 +1870,6 @@ ${buttonContainer}`
           draws-when-occluded="true"
           .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
           extruded="true"
-          label=${originLabel}
           @gmp-click=${(e: any) => {
           if (e.preventDefault) e.preventDefault();
           e.stopPropagation();
@@ -1647,7 +1878,7 @@ ${buttonContainer}`
             this.handleMarkerClick(placeId);
           }
         }}
-          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'A', false, '#00b40fff', '#ccffcc', '#007300ff', originMarkerHtml))}
+          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'A', false, '#059669', '#f59e0b', '#fef08a', originMarkerHtml))}
         >
         </gmp-marker-3d-interactive>
       `);
@@ -1669,26 +1900,7 @@ ${buttonContainer}`
       );
       const destinationMarkerHtml = `
         <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
-          <div
-            style="
-              max-width: 160px;
-              padding: 2px 6px;
-              border-radius: 9999px;
-              background: rgba(127, 29, 29, 0.94);
-              color: #fee2e2;
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-              font-size: 10px;
-              font-weight: 500;
-              line-height: 1.1;
-              text-align: center;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              box-shadow:
-                0 2px 4px rgba(15, 23, 42, 0.75),
-                0 0 6px rgba(248, 113, 113, 0.6);
-            "
-          >
+          <div style="${MAP_APP_LABEL_PILL_STYLE} max-width: 160px;">
             ${destinationLabel}
           </div>
           <div
@@ -1700,10 +1912,10 @@ ${buttonContainer}`
               align-items: center;
               justify-content: center;
               background: radial-gradient(circle at 30% 20%, #fee2e2 0, #fecaca 40%, #fca5a5 100%);
-              border: 4px solid #ef4444;
+              border: 4px solid #dc2626;
               box-shadow:
-                0 4px 10px rgba(15, 23, 42, 0.6),
-                0 0 12px rgba(239, 68, 68, 0.75);
+                0 4px 10px rgba(15, 23, 42, 0.65),
+                0 0 14px rgba(245, 158, 11, 0.45);
             "
           >
             <div
@@ -1715,7 +1927,7 @@ ${buttonContainer}`
                 align-items: center;
                 justify-content: center;
                 background: #7f1d1d;
-                color: #ffffff;
+                color: #fef08a;
                 font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 font-weight: 700;
                 font-size: 18px;
@@ -1737,7 +1949,6 @@ ${buttonContainer}`
           draws-when-occluded="true"
           .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
           extruded="true"
-          label=${destinationLabel}
           @gmp-click=${(e: any) => {
           if (e.preventDefault) e.preventDefault();
           e.stopPropagation();
@@ -1746,7 +1957,7 @@ ${buttonContainer}`
             this.handleMarkerClick(placeId);
           }
         }}
-          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'B', false, '#FF0000', '#FFFFFF', 'white', destinationMarkerHtml))}
+          ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, 'B', false, '#dc2626', '#f59e0b', '#fef08a', destinationMarkerHtml))}
         >
         </gmp-marker-3d-interactive>
       `);
@@ -1860,31 +2071,12 @@ ${buttonContainer}`
         const cachedName = place.id && this.placeNamesCache.get(place.id);
         const rawPlaceName = cachedName || place.displayName?.text || place.formattedAddress || place.place || `Place ${indexLabel}`;
 
-        const backgroundColor = isSelected ? '#0069a6' : '#00a2ff';
-        const borderColor = isSelected ? '#004f7a' : '#0069a6';
+        const backgroundColor = isSelected ? MAP_PLACE_COLORS.fillSelected : MAP_PLACE_COLORS.fill;
+        const borderColor = isSelected ? MAP_PLACE_COLORS.borderSelected : MAP_PLACE_COLORS.border;
 
         const circularMarkerHtml = `
           <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
-            <div
-              style="
-                max-width: 180px;
-                padding: 2px 6px;
-                border-radius: 10px;
-                background: rgba(15, 23, 42, 0.9);
-                color: #e0f2fe;
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                font-size: 10px;
-                font-weight: 500;
-                line-height: 1.1;
-                text-align: center;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                box-shadow:
-                  0 2px 4px rgba(15, 23, 42, 0.75),
-                  0 0 8px rgba(59, 130, 246, 0.8);
-              "
-            >
+            <div style="${MAP_APP_LABEL_PILL_STYLE}">
               ${formatPlaceNameForLabel(rawPlaceName)}
             </div>
             <div
@@ -1895,11 +2087,11 @@ ${buttonContainer}`
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: radial-gradient(circle at 30% 20%, #e0f2fe 0, #bae6fd 40%, #7dd3fc 100%);
+                background: ${MAP_PLACE_COLORS.ringGradient};
                 border: 4px solid ${borderColor};
                 box-shadow:
                   0 4px 10px rgba(15, 23, 42, 0.65),
-                  0 0 14px rgba(59, 130, 246, 0.85);
+                  0 0 14px rgba(245, 158, 11, 0.45);
               "
             >
               <div
@@ -1911,7 +2103,7 @@ ${buttonContainer}`
                   align-items: center;
                   justify-content: center;
                   background: ${backgroundColor};
-                  color: #ffffff;
+                  color: #fffbeb;
                   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                   font-weight: 700;
                   font-size: 18px;
@@ -1927,7 +2119,6 @@ ${buttonContainer}`
           <gmp-marker-3d-interactive
             position=${`${place.location.latitude},${place.location.longitude}, 50`}
             title=${`${rawPlaceName} [${indexLabel}] Click for place details`}
-            label=${formatPlaceNameForLabel(rawPlaceName)}
             collision-behavior=${this.shouldPlacesBeOptional() ? "OPTIONAL_AND_HIDES_LOWER_PRIORITY" : "REQUIRED_AND_HIDES_OPTIONAL"}
             .altitudeMode=${this.AltitudeMode.RELATIVE_TO_MESH}
             extruded="true"
@@ -1938,7 +2129,7 @@ ${buttonContainer}`
             e.stopPropagation();
             this.handleMarkerClick(place.id);
           }}
-            ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, indexLabel, isSelected, backgroundColor, borderColor, '#FFFFFF', circularMarkerHtml))}
+            ${onConnected((el: Element) => this.createAndAppendPin(el as HTMLElement, indexLabel, isSelected, backgroundColor, '#f59e0b', '#fffbeb', circularMarkerHtml))}
           >
           </gmp-marker-3d-interactive>
         `;
@@ -1952,8 +2143,8 @@ ${buttonContainer}`
     return html`
       <gmp-polyline-3d
         .path=${(routeData as any).path}
-        stroke-color="#00BFFF"
-        stroke-width="4"
+        stroke-color=${MAP_ROUTE_LINE_COLOR}
+        stroke-width="5"
         altitude-mode="CLAMP_TO_GROUND"
         extruded="true"
         draws-occluded-segments="true"
@@ -2028,6 +2219,191 @@ ${buttonContainer}`
   }
 
 
+  /** True when there is map geometry to frame — show inverse vignette outside the focus circle. */
+  private shouldShowMapFocusVignette(): boolean {
+    const { places, route, weather } = this.mapDisplayData;
+    if (route) {
+      return true;
+    }
+    if (places?.some((p) => p.location)) {
+      return true;
+    }
+    if (this.shouldRenderWeatherMarker() && weather?.locationCoords) {
+      return true;
+    }
+    return false;
+  }
+
+  private getMap3dViewportSize(): { w: number; h: number } {
+    const el = document.getElementById('map-3d');
+    const r = el?.getBoundingClientRect();
+    if (r && r.width > 0 && r.height > 0) {
+      return { w: r.width, h: r.height };
+    }
+    return { w: window.innerWidth, h: window.innerHeight };
+  }
+
+  /**
+   * Max hole radius (px) so the spotlight stays inside the map box (matches #map-focus-vignette-layer
+   * --focus-hole-x: 50% default, 44% at sm+ in index.css).
+   */
+  private maxFocusHoleRadiusPxForViewport(w: number, h: number): number {
+    const isSm = typeof window !== 'undefined' && window.innerWidth >= 640;
+    const holeXFrac = isSm ? 0.44 : 0.5;
+    const cx = w * holeXFrac;
+    const cy = h * 0.5;
+    const margin = 10;
+    const maxR = Math.min(cx - margin, w - cx - margin, cy - margin, h - cy - margin);
+    return Math.max(32, maxR);
+  }
+
+  /** Prefer live `range` from the map element so vignette matches the camera (avoids stale state right after fly-to). */
+  private readLiveMapRangeFromElement(): number | null {
+    const el = (this.mapRef ?? document.getElementById('map-3d')) as any;
+    if (!el) {
+      return null;
+    }
+    const r = el.range;
+    if (typeof r === 'number' && Number.isFinite(r) && r > 0) {
+      return r;
+    }
+    return null;
+  }
+
+  /**
+   * Lat/lng for every marker we draw — matches overlap rules in renderPlaceMarkers / weather / route.
+   */
+  private collectClusterLatLngsForVignette(): google.maps.LatLng[] {
+    const g = window.google?.maps;
+    if (!g?.LatLng || !g.LatLngBounds) {
+      return [];
+    }
+    const pts: google.maps.LatLng[] = [];
+    const { places, route, weather } = this.mapDisplayData;
+
+    if (route) {
+      const routePath = (route as any).path;
+      if (routePath && routePath.length > 0) {
+        routePath.forEach((point: any) => {
+          if (!point) {
+            return;
+          }
+          if (typeof point.lat === 'function') {
+            pts.push(point);
+          } else if (typeof point.latitude === 'number' && typeof point.longitude === 'number') {
+            pts.push(new g.LatLng(point.latitude, point.longitude));
+          } else if (typeof point.lat === 'number' && typeof point.lng === 'number') {
+            pts.push(new g.LatLng(point.lat, point.lng));
+          }
+        });
+      } else {
+        const origin = route.origin?.lat_lng;
+        const destination = route.destination?.lat_lng;
+        if (origin) {
+          pts.push(new g.LatLng(origin.latitude, origin.longitude));
+        }
+        if (destination) {
+          pts.push(new g.LatLng(destination.latitude, destination.longitude));
+        }
+      }
+    }
+
+    if (places) {
+      for (const place of places) {
+        if (!place.location) {
+          continue;
+        }
+        if (route) {
+          if (isSameLatLng(place.location, route.origin?.lat_lng) || isSameLatLng(place.location, route.destination?.lat_lng)) {
+            continue;
+          }
+        }
+        pts.push(new g.LatLng(place.location.latitude, place.location.longitude));
+      }
+    }
+
+    if (weather?.locationCoords && this.shouldRenderWeatherMarker()) {
+      const hasPlaceOverlap = places?.some(
+        (place) => place.location && isSameLatLng(place.location, weather.locationCoords),
+      );
+      if (!hasPlaceOverlap) {
+        pts.push(new g.LatLng(weather.locationCoords.latitude, weather.locationCoords.longitude));
+      }
+    }
+
+    return pts;
+  }
+
+  /**
+   * When the natural spotlight radius would fill the map (>= max inscribed circle), hide the vignette
+   * instead of showing a stuck full-screen ring; it reappears after zoom-out shrinks the desired radius.
+   */
+  private computeFocusVignetteParams(): { show: boolean; radiusPx: number } {
+    const { w, h } = this.getMap3dViewportSize();
+    const maxR = this.maxFocusHoleRadiusPxForViewport(w, h);
+
+    const applyHideRule = (desiredRaw: number): { show: boolean; radiusPx: number } => {
+      const desired = Math.max(0, desiredRaw);
+      if (!Number.isFinite(desired) || desired <= 0) {
+        return { show: false, radiusPx: 0 };
+      }
+      // At or past the max inscribed circle: hide instead of a stuck full-screen ring; re-show on zoom-out.
+      if (desired >= maxR - 2) {
+        return { show: false, radiusPx: 0 };
+      }
+      return { show: true, radiusPx: Math.min(desired, maxR - 4) };
+    };
+
+    const range = this.readLiveMapRangeFromElement() ?? this.vignetteRangeMeters;
+    const g = window.google?.maps;
+    if (!g?.geometry?.spherical?.computeDistanceBetween) {
+      return applyHideRule(focusHoleRadiusFromRangeMeters(range));
+    }
+    const rawPts = this.collectClusterLatLngsForVignette();
+    if (rawPts.length === 0) {
+      return applyHideRule(focusHoleRadiusFromRangeMeters(range));
+    }
+
+    const bounds = new g.LatLngBounds();
+    rawPts.forEach((p) => bounds.extend(p));
+    const center = bounds.getCenter();
+    let maxDistM = 0;
+    for (const p of rawPts) {
+      const d = g.geometry.spherical.computeDistanceBetween(center, p);
+      if (d > maxDistM) {
+        maxDistM = d;
+      }
+    }
+    if (rawPts.length === 1) {
+      maxDistM = Math.max(maxDistM, VIGNETTE_MIN_CLUSTER_RADIUS_M);
+    }
+    const clusterRadiusM = maxDistM * VIGNETTE_CLUSTER_PADDING;
+
+    const verticalM = verticalMetersVisibleAtRange(range, MAP3D_DEFAULT_VERTICAL_FOV_DEG);
+    const metersPerPixel = verticalM / Math.max(h, 1);
+    const pxFromCluster = clusterRadiusM / metersPerPixel + VIGNETTE_PIN_CHROME_PADDING_PX;
+    const tiltBoost = 1 + Math.min(75, Math.max(0, this.mapTilt)) * 0.005;
+    const desired = Math.max(56, pxFromCluster * tiltBoost);
+    return applyHideRule(desired);
+  }
+
+  /** Sibling of gmp-map-3d — styles in index.css (#map-focus-vignette-layer). */
+  private renderMapFocusVignette() {
+    const { show, radiusPx } = this.computeFocusVignetteParams();
+    if (!show) {
+      return '';
+    }
+    return html`
+      <div
+        id="map-focus-vignette-layer"
+        class="map-focus-vignette-wrap"
+        style="--focus-hole-r: ${radiusPx}px;"
+      >
+        <div class="map-focus-vignette" aria-hidden="true"></div>
+      </div>
+    `;
+  }
+
   private shouldRenderWeatherMarker(): boolean {
     if (!this.mapDisplayData.weather) {
       return false; // No weather data to display
@@ -2084,23 +2460,139 @@ ${buttonContainer}`
     );
   }
 
-  private renderPlaceDetailsWidget() {
+  private shouldShowLeftDetailsPane(): boolean {
+    return !!(
+      this.placeCategoriesPanel &&
+      this.mapDisplayData.places &&
+      this.mapDisplayData.places.length > 0
+    );
+  }
+
+  private getPlaceListLabel(place: Place, fallbackIndex: number): string {
+    const cached = place.id ? this.placeNamesCache.get(place.id) : undefined;
+    const raw =
+      cached ||
+      place.displayName?.text ||
+      place.formattedAddress ||
+      place.place ||
+      `Place ${(place.id && this.placeIdToIndexMap.get(place.id)) ?? fallbackIndex + 1}`;
+    return formatPlaceNameForLabel(raw);
+  }
+
+  private renderLeftDetailsPane() {
+    const places = this.mapDisplayData.places;
+    const panel = this.placeCategoriesPanel;
+    if (!places?.length || !panel?.categories.length) {
+      return '';
+    }
+
+    const categories = panel.categories;
+    const activeTab =
+      categories.find((c) => c.id === this.activePlaceCategoryId) ?? categories[0];
+    const activeId = activeTab?.id ?? '';
+    const indices = activeTab?.placeIndices ?? [];
+
+    return html`
+      <aside
+        class="absolute left-0 top-0 bottom-0 z-[12] flex w-[min(92vw,20rem)] flex-col pointer-events-auto border-r border-[#1f2937] bg-[#020617]/95 shadow-xl backdrop-blur-md"
+        aria-label="Results by category"
+      >
+        <div class="shrink-0 border-b border-[#1f2937] px-3 py-2.5">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-[#9ca3af]">Explore</h2>
+          <p class="text-sm font-medium text-[#e5e7eb]">By category</p>
+        </div>
+        <div
+          class="flex shrink-0 gap-1 overflow-x-auto border-b border-[#1f2937] px-2 py-2"
+          role="tablist"
+        >
+          ${repeat(
+            categories,
+            (c) => c.id,
+            (c) => html`
+              <button
+                type="button"
+                role="tab"
+                aria-selected=${c.id === activeId}
+                class="whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${c.id === activeId
+                  ? 'bg-[#38bdf8] text-[#020617]'
+                  : 'bg-white/5 text-[#cbd5e1] hover:bg-white/10'}"
+                @click=${() => {
+                  this.activePlaceCategoryId = c.id;
+                }}
+              >
+                ${c.label}
+              </button>
+            `,
+          )}
+        </div>
+        <ul class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2" role="tabpanel">
+          ${indices.length === 0
+            ? html`<li class="px-2 py-4 text-center text-xs text-[#9ca3af]">
+                No places in this category.
+              </li>`
+            : repeat(indices, (idx) => idx, (idx) => {
+                const place = places[idx];
+                if (!place) {
+                  return html``;
+                }
+                const label = this.getPlaceListLabel(place, idx);
+                const selected = place.id === this.selectedPlaceIdForDetails;
+                return html`
+                  <li>
+                    <button
+                      type="button"
+                      class="flex w-full flex-col items-start rounded-lg px-2 py-2 text-left text-sm transition-colors ${selected
+                        ? 'bg-[#38bdf8]/20 ring-1 ring-[#38bdf8]/50'
+                        : 'hover:bg-white/5'}"
+                      @click=${() => this.handlePlaceClick(place)}
+                    >
+                      <span class="font-medium text-[#e5e7eb]">${label}</span>
+                      ${place.formattedAddress
+                        ? html`<span class="mt-0.5 line-clamp-2 text-xs text-[#9ca3af]"
+                            >${place.formattedAddress}</span
+                          >`
+                        : ''}
+                    </button>
+                  </li>
+                `;
+              })}
+        </ul>
+        ${this.renderPlaceDetailsWidget('panel')}
+      </aside>
+    `;
+  }
+
+  private renderPlaceDetailsWidget(variant: 'chat' | 'panel' = 'chat') {
     if (!this.selectedPlaceIdForDetails) {
       return '';
     }
 
     const placeResourceName = `places/${this.selectedPlaceIdForDetails}`;
+    const compact = html`
+      <gmp-place-details-compact orientation="horizontal">
+        <gmp-place-details-place-request place=${placeResourceName}></gmp-place-details-place-request>
+        <gmp-place-all-content></gmp-place-all-content>
+      </gmp-place-details-compact>
+    `;
 
-    // Render as a model message at the end of the chat container
-    return html`
-        <div class="flex justify-start pointer-events-auto">
-            <div class="max-w-full sm:max-w-[90%] w-full p-3 shadow bg-[#FFFFFF] text-[#1A1C1E] rounded-t-2xl rounded-r-2xl rounded-bl-lg">
-                <gmp-place-details-compact orientation="horizontal">
-                  <gmp-place-details-place-request place=${placeResourceName}></gmp-place-details-place-request>
-                  <gmp-place-all-content></gmp-place-all-content>
-                </gmp-place-details-compact>
-            </div>
+    if (variant === 'panel') {
+      return html`
+        <div class="shrink-0 border-t border-[#1f2937] bg-[#0f172a]/80 p-2">
+          <div class="max-h-[38vh] overflow-y-auto rounded-lg bg-[#FFFFFF] p-2 text-[#1A1C1E] shadow-inner">
+            ${compact}
+          </div>
         </div>
+      `;
+    }
+
+    return html`
+      <div class="flex justify-start pointer-events-auto">
+        <div
+          class="max-w-full sm:max-w-[90%] w-full p-3 shadow bg-[#FFFFFF] text-[#1A1C1E] rounded-t-2xl rounded-r-2xl rounded-bl-lg"
+        >
+          ${compact}
+        </div>
+      </div>
     `;
   }
 
@@ -2123,14 +2615,15 @@ ${buttonContainer}`
             padding-bottom: 40px;
             padding-bottom: calc(40px + env(safe-area-inset-bottom));
         }
+
       </style>
 
       <div class="w-full h-full" style="background: radial-gradient(circle at top, #1f2937 0, #020617 45%, #000000 100%); color: #e5e7eb;" class="selection:bg-[#38bdf8] selection:text-[#0b1120]">
         <div id="places-service-dummy" style="display: none;"></div>
         <div class="w-full h-full relative overflow-hidden">
 
-          <!-- Map Container (100% width/height) -->
-          <div class="absolute inset-0 w-full h-full">
+          <!-- Map Container (100% width/height); vignette is a sibling above gmp-map-3d (not inside — WebGL sits on top of in-map HTML). -->
+          <div class="absolute inset-0 z-[1] w-full h-full">
             <gmp-map-3d
               id="map-3d"
               mode="hybrid"
@@ -2139,9 +2632,11 @@ ${buttonContainer}`
               tilt=${this.mapTilt}
               heading=${this.mapHeading}
               range=${this.mapRange}
+              region="IN"
+              .bounds=${SOUTH_INDIA_BOUNDS}
               map-id="749ac551edae0fb44cf73ee1"
-              class="absolute inset-0 w-full h-full"
-              aria-label="3D Map of found locations"
+              class="absolute inset-0 z-0 w-full h-full"
+              aria-label="Map of South India"
               @gmp-click=${this.handleMapClick}
             >
               ${this.mapDisplayData.route ? this.renderRoutePolyline(this.mapDisplayData.route) : ''}
@@ -2149,11 +2644,13 @@ ${buttonContainer}`
               ${this.mapDisplayData.route ? this.renderRouteMarkers(this.mapDisplayData.route) : ''}
               ${this.shouldRenderWeatherMarker() ? this.renderWeatherMarker(this.mapDisplayData.weather) : ''}
             </gmp-map-3d>
+            ${this.shouldShowMapFocusVignette() ? this.renderMapFocusVignette() : ''}
+            ${this.shouldShowLeftDetailsPane() ? this.renderLeftDetailsPane() : ''}
           </div>
 
           <!-- Blur overlay above the map (toggled by chat hover/focus) -->
           <div
-            class="absolute inset-0 pointer-events-none transition-opacity duration-200"
+            class="absolute inset-0 z-[2] pointer-events-none transition-opacity duration-200"
             style="${this.isMapBlurred ? 'opacity:1;' : 'opacity:0;'} background: radial-gradient(circle at top, rgba(15,23,42,0.7) 0, rgba(15,23,42,0.8) 50%, rgba(15,23,42,0.9) 100%); backdrop-filter: blur(10px);"
           ></div>
 
@@ -2172,7 +2669,6 @@ ${buttonContainer}`
               </svg>
             </button>
             ` : ''}
-            </button>
            <!-- <header class="text-center p-4 sm:p-6 border-b border-[#DFE3E8] flex-shrink-0">
               <h1 class="text-3xl sm:text-4xl font-bold text-[#006780]">
                 <strong>M</strong>aps<strong>C</strong>onvo<strong>P</strong>al Assistant
@@ -2256,12 +2752,13 @@ ${buttonContainer}`
                 <div class="flex justify-center p-4"> <loading-spinner></loading-spinner> </div>
               ` : ''}
 
-              <!-- Place Details Widget (New Location) -->
-              ${this.renderPlaceDetailsWidget()}
+              <!-- Place details: left pane when categories panel is open; else chat -->
+              ${this.shouldShowLeftDetailsPane() ? '' : this.renderPlaceDetailsWidget()}
             </div>
 
             <!-- Input area container: restored to flex flow for correct height calculation -->
             <div class="px-4 sm:p-6 flex-shrink-0 pointer-events-auto pb-safe">
+              ${this.showSuggestions ? html`
               <div class="overflow-x-auto px-4 -mx-4 sm:p-0 sm:m-0 sm:flex sm:flex-col sm:gap-1 quick-answers-mobile-layout">
                 <div class="flex gap-1 w-max sm:w-full sm:block py-0.5 sm:py-0">
                 ${(this.chatHistory.length <= 1 ? this.quickAnswers : this.getDynamicQuickAnswers()).map(answer => html`
@@ -2281,13 +2778,14 @@ ${buttonContainer}`
                 `)}
                 </div>
               </div>
+              ` : ''}
               <form @submit=${this.handleSendMessage}>
                 <div class="flex items-center">
                   <input
                     type="text"
                     .value=${this.userInput}
                     @input=${(e: Event) => this.userInput = (e.target as HTMLInputElement).value}
-                    placeholder=${this.isAwaitingRouteOrigin ? "Enter your starting point (origin)" : (areAllKeysConfigured ? "Chat with your map" : "API keys must be configured.")}
+                    placeholder=${this.isAwaitingRouteOrigin ? "Enter your starting point (origin)" : (areAllKeysConfigured ? "Type here..." : "API keys must be configured.")}
                     class="flex-grow p-3 text-sm text-[#e5e7eb] bg-[#020617] rounded-l-full focus:outline-none disabled:opacity-50 shadow border border-[#1f2937]"
                     ?disabled=${this.isLoading || !areAllKeysConfigured}
                     aria-label="User input"
